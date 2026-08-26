@@ -1,0 +1,1766 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#183452" />
+  <title>CAP Uniform Inspection Tracker</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <style>
+:root {
+  --navy-950: #10263b;
+  --navy-900: #183452;
+  --navy-800: #234d73;
+  --blue-100: #eaf2f8;
+  --blue-50: #f5f9fc;
+  --red: #a92027;
+  --red-dark: #85191e;
+  --bg: #edf1f5;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --text: #17212b;
+  --muted: #667482;
+  --border: #d7dee6;
+  --border-strong: #c4ced8;
+  --success: #17633a;
+  --success-bg: #e1f5e9;
+  --warning: #805516;
+  --warning-bg: #fff1cf;
+  --danger: #971f27;
+  --danger-bg: #fde7e9;
+  --shadow-sm: 0 2px 8px rgba(16, 38, 59, .06);
+  --shadow-lg: 0 18px 50px rgba(16, 38, 59, .18);
+  font-family: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+.hidden { display: none !important; }
+.grow { flex: 1; }
+.stack { display: grid; gap: 14px; }
+.app-locked { pointer-events: none; user-select: none; }
+
+/* ---------- Application chrome ---------- */
+.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.app-header {
+  min-height: 72px;
+  padding: 10px clamp(18px, 3vw, 42px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: linear-gradient(135deg, var(--navy-950), var(--navy-900));
+  color: #fff;
+  border-bottom: 3px solid var(--red);
+}
+.header-brand, .header-user { display: flex; align-items: center; gap: 13px; }
+.cap-badge {
+  width: 42px; height: 42px; border-radius: 7px;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.28);
+  color: white; font-weight: 900; letter-spacing: .075em; font-size: .82rem;
+}
+.cap-badge.large { width: 56px; height: 56px; font-size: 1rem; background: var(--navy-900); }
+.header-title { display: grid; gap: 1px; }
+.header-title span { font-size: .68rem; text-transform: uppercase; letter-spacing: .16em; opacity: .72; }
+.header-title strong { font-size: 1.22rem; letter-spacing: .01em; }
+.header-user > span { font-size: .82rem; opacity: .86; }
+.header-button {
+  border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 8px 12px;
+  background: rgba(255,255,255,.1); color: #fff; font-weight: 700;
+}
+.header-button:hover { background: rgba(255,255,255,.18); }
+
+.main-tabs {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: stretch;
+  min-height: 52px;
+  padding: 0 clamp(18px, 3vw, 42px);
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 2px 7px rgba(16,38,59,.04);
+}
+.main-tab {
+  min-width: 160px;
+  border: 0; border-right: 1px solid #edf0f3; border-bottom: 4px solid transparent;
+  background: transparent; color: #5d6a76;
+  padding: 0 22px;
+  display: flex; justify-content: center; align-items: center; gap: 9px;
+  font-weight: 800; font-size: .93rem;
+}
+.main-tab:first-child { border-left: 1px solid #edf0f3; }
+.main-tab:hover { background: #f8fafc; color: var(--navy-900); }
+.main-tab.active { color: var(--navy-900); background: #fbfcfd; border-bottom-color: var(--red); }
+.tab-number {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: #e8edf2; color: #5e6d7b; font-size: .7rem;
+}
+.main-tab.active .tab-number { background: var(--navy-900); color: white; }
+
+.workspace { width: min(1320px, calc(100% - 36px)); margin: 24px auto 46px; flex: 1; }
+.view { display: none; }
+.active-view { display: block; }
+.page-title-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 16px; }
+.page-kicker { color: var(--red); font-size: .7rem; font-weight: 900; letter-spacing: .14em; margin-bottom: 3px; }
+.page-title-row h1 { margin: 0; font-size: 1.62rem; color: var(--navy-950); }
+.page-title-row p { margin: 5px 0 0; color: var(--muted); font-size: .92rem; }
+
+/* ---------- Generic controls ---------- */
+.app-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
+}
+.panel-heading { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
+.panel-heading h2, .app-panel h2 { margin: 0; font-size: 1.06rem; color: var(--navy-950); }
+.panel-heading p { margin: 4px 0 0; color: var(--muted); font-size: .82rem; }
+.required-note { font-size: .73rem; color: var(--muted); }
+.field { display: grid; gap: 6px; color: #2a3947; font-weight: 700; font-size: .84rem; }
+.field span small { color: var(--muted); font-weight: 500; }
+input, select, textarea {
+  width: 100%; min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  background: #fff; color: var(--text); outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+textarea { min-height: 104px; resize: vertical; line-height: 1.4; }
+input:focus, select:focus, textarea:focus { border-color: #6687a5; box-shadow: 0 0 0 3px rgba(50, 101, 145, .12); }
+select:invalid { color: #6b7883; }
+.primary, .secondary {
+  border: 0; border-radius: 6px; padding: 10px 16px; font-weight: 800;
+}
+.primary { background: var(--navy-900); color: white; }
+.primary:hover { background: var(--navy-800); }
+.secondary { background: #e7edf3; color: var(--navy-900); }
+.secondary:hover { background: #dce5ed; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.form-message { min-height: 20px; margin: 9px 0 0; font-size: .88rem; }
+.form-message.error { color: var(--danger); }
+.form-message.success { color: var(--success); }
+
+/* ---------- Entry ---------- */
+.legend-box { padding: 9px 12px; background: #fff; border: 1px solid var(--border); border-radius: 7px; }
+.legend-title { color: var(--muted); font-size: .64rem; font-weight: 900; letter-spacing: .08em; margin-bottom: 5px; }
+.legend-items { display: flex; gap: 10px; flex-wrap: wrap; }
+.legend-items span { font-size: .76rem; color: #52606c; white-space: nowrap; }
+.legend-items b { display: inline-grid; place-items: center; width: 19px; height: 19px; margin-right: 3px; border-radius: 4px; background: var(--navy-900); color: #fff; font-size: .68rem; }
+.entry-grid { display: grid; grid-template-columns: 170px 160px minmax(240px, 1fr) minmax(285px, 1fr); gap: 14px; }
+.standards-banner { margin-top: 14px; padding: 10px 12px; background: var(--blue-50); border: 1px solid #d7e5f0; border-left: 4px solid var(--navy-800); border-radius: 5px; color: #35546e; font-size: .82rem; }
+.inspection-panel { margin-top: 14px; padding: 0; overflow: hidden; }
+.inspection-panel-heading { padding: 18px 20px 14px; margin: 0; border-bottom: 1px solid var(--border); }
+.score-max { font-size: .8rem; color: var(--muted); white-space: nowrap; }
+.inspection-table { width: 100%; }
+.inspection-table-header, .inspection-row {
+  display: grid;
+  grid-template-columns: minmax(170px, .8fr) minmax(360px, 2fr) minmax(220px, .9fr) 82px;
+  align-items: center;
+}
+.inspection-table-header { background: #f3f6f8; border-bottom: 1px solid var(--border); color: #5a6875; font-size: .68rem; font-weight: 900; text-transform: uppercase; letter-spacing: .055em; }
+.inspection-table-header > div { padding: 9px 14px; }
+.inspection-row { min-height: 82px; border-bottom: 1px solid #e5eaf0; }
+.inspection-row:last-child { border-bottom: 0; }
+.inspection-row > div { padding: 14px; }
+.inspection-area strong { color: var(--navy-950); font-size: .94rem; }
+.inspection-description { color: var(--muted); font-size: .82rem; line-height: 1.42; }
+.inspection-rating { min-height: 40px; font-size: .84rem; font-weight: 650; }
+.points-cell { display: flex; align-items: baseline; justify-content: center; gap: 2px; }
+.row-points { font-size: 1.35rem; font-weight: 900; color: var(--navy-900); }
+.points-cell small { color: var(--muted); font-weight: 650; }
+.inspection-row[data-score="0"] { box-shadow: inset 4px 0 0 var(--danger); }
+.inspection-row[data-score="1"] { box-shadow: inset 4px 0 0 #d5a32f; }
+.inspection-row[data-score="2"] { box-shadow: inset 4px 0 0 var(--success); }
+.entry-bottom-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(390px, .9fr); gap: 14px; margin-top: 14px; }
+.notes-panel { min-height: 100%; }
+.total-panel { border-top: 4px solid var(--navy-900); }
+.overall-heading { font-size: 1rem; font-weight: 900; color: var(--navy-950); border-bottom: 1px solid var(--border); padding-bottom: 11px; margin-bottom: 14px; }
+.overall-score-line { display: grid; grid-template-columns: .75fr 1.2fr 1fr; gap: 12px; align-items: start; }
+.overall-label { display: block; color: var(--muted); font-size: .63rem; font-weight: 900; letter-spacing: .065em; margin-bottom: 6px; }
+.score-number { font-size: 2.2rem; line-height: 1; font-weight: 900; color: var(--navy-950); }
+.score-number small { font-size: .85rem; color: var(--muted); margin-left: 2px; }
+.status-badge { display: inline-block; border-radius: 5px; padding: 7px 9px; font-size: .75rem; font-weight: 900; }
+.status-badge.neutral { color: #536270; background: #e9eef2; }
+.status-badge.needs, .status-badge.fail { color: var(--danger); background: var(--danger-bg); }
+.status-badge.satisfactory { color: var(--warning); background: var(--warning-bg); }
+.status-badge.excellent, .status-badge.pass { color: var(--success); background: var(--success-bg); }
+.submit-button { width: 100%; margin-top: 18px; min-height: 46px; font-size: .95rem; }
+
+/* ---------- Bulk Entry ---------- */
+#bulkView.active-view { width: min(1760px, calc(100vw - 36px)); margin-left: 50%; transform: translateX(-50%); }
+.bulk-toolbar-panel { padding: 14px 16px; margin-bottom: 12px; }
+.bulk-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.bulk-date-field { width: 190px; flex: 0 0 190px; }
+.bulk-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.bulk-help { margin: 8px 0 0; color: var(--muted); font-size: .78rem; }
+.bulk-panel { padding: 0; overflow: hidden; }
+.bulk-table-wrap { max-height: calc(100vh - 320px); min-height: 350px; overflow: auto; }
+.bulk-table { min-width: 1540px; font-size: .78rem; }
+.bulk-table thead th { position: sticky; top: 0; z-index: 3; box-shadow: 0 1px 0 var(--border); }
+.bulk-table th, .bulk-table td { padding: 7px 6px; }
+.bulk-table td:nth-child(1) { min-width: 105px; }
+.bulk-table td:nth-child(2) { min-width: 185px; }
+.bulk-table td:nth-child(3) { min-width: 160px; }
+.bulk-table td:nth-child(n+4):nth-child(-n+8) { min-width: 145px; }
+.bulk-table td:nth-child(9) { min-width: 80px; text-align: center; }
+.bulk-table td:nth-child(10) { min-width: 105px; text-align: center; }
+.bulk-table input, .bulk-table select { min-height: 35px; padding: 6px 7px; border-radius: 4px; font-size: .76rem; }
+.bulk-row-number { color: var(--muted); font-weight: 800; }
+.bulk-score { font-weight: 900; color: var(--navy-950); font-size: .9rem; }
+.bulk-result { display: inline-block; min-width: 78px; padding: 5px 7px; border-radius: 4px; font-size: .7rem; font-weight: 900; }
+.bulk-result.pass { color: var(--success); background: var(--success-bg); }
+.bulk-result.fail { color: var(--danger); background: var(--danger-bg); }
+.bulk-result.incomplete { color: #536270; background: #e9eef2; }
+.bulk-remove { width: 30px; height: 30px; border: 0; border-radius: 4px; background: #eef2f5; color: #667482; font-weight: 900; }
+.bulk-remove:hover { background: var(--danger-bg); color: var(--danger); }
+.bulk-row-error { background: #fff7f7 !important; box-shadow: inset 3px 0 var(--danger); }
+.bulk-footer { min-height: 48px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 14px; background: #f7f9fb; border-top: 1px solid var(--border); color: var(--muted); font-size: .78rem; }
+
+/* ---------- Reports ---------- */
+.subtabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: #e8edf2; }
+.subtab { border: 0; border-radius: 5px; background: transparent; color: #5d6a76; padding: 8px 13px; font-weight: 800; font-size: .82rem; }
+.subtab.active { background: white; color: var(--navy-900); box-shadow: 0 1px 3px rgba(16,38,59,.12); }
+.report-panel { display: none; }
+.active-report-panel { display: block; }
+.report-toolbar { display: flex; gap: 10px; align-items: end; margin-bottom: 12px; }
+.report-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.empty-state { padding: 48px 20px; text-align: center; border: 1px dashed #b9c4cf; border-radius: 8px; background: rgba(255,255,255,.5); color: var(--muted); }
+.stat-grid { display: grid; gap: 10px; margin-bottom: 10px; }
+.stat-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stat-card { background: white; border: 1px solid var(--border); border-radius: 7px; padding: 15px; box-shadow: var(--shadow-sm); }
+.stat-card .stat-label { color: var(--muted); font-size: .67rem; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+.stat-card .stat-value { margin-top: 4px; font-size: 1.55rem; font-weight: 900; color: var(--navy-950); }
+.stat-card .stat-detail { color: var(--muted); font-size: .75rem; margin-top: 3px; }
+.chart-card { min-height: 300px; margin-bottom: 10px; }
+.chart-card h2, .report-table-card h2 { margin-bottom: 14px; }
+.report-table-card { margin-top: 10px; }
+.dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.insight-list { display: grid; gap: 9px; }
+.insight { padding: 11px; border-left: 4px solid #7895af; background: #f5f8fb; border-radius: 5px; line-height: 1.4; font-size: .86rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+th, td { padding: 10px 9px; text-align: left; border-bottom: 1px solid #e5eaf0; white-space: nowrap; }
+th { color: #52616e; font-size: .67rem; text-transform: uppercase; letter-spacing: .045em; background: #f4f7f9; }
+tbody tr:hover { background: #fafcfd; }
+
+/* ---------- Administration ---------- */
+.admin-stack { display: grid; gap: 14px; }
+.admin-grid { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 14px; }
+.grading-panel { border-top: 4px solid var(--navy-900); }
+.grading-rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grading-rule-card { border: 1px solid var(--border); background: #f8fafc; border-radius: 7px; padding: 16px; }
+.grading-rule-title { font-weight: 900; color: var(--navy-950); margin-bottom: 12px; }
+.grading-rule-title small { display: block; margin-top: 3px; font-size: .72rem; font-weight: 600; color: var(--muted); }
+.threshold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rule-preview { margin-top: 12px; padding: 10px 12px; border-radius: 5px; border-left: 4px solid var(--navy-800); background: white; color: #40576b; font-size: .8rem; line-height: 1.5; }
+.admin-form-actions { margin-top: 14px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+/* ---------- Login ---------- */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 5000;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(12, 29, 45, .66); backdrop-filter: blur(7px);
+}
+.login-window { width: min(465px, 100%); overflow: hidden; border-radius: 9px; background: white; box-shadow: var(--shadow-lg); border: 1px solid rgba(255,255,255,.55); }
+.login-banner { display: flex; align-items: center; gap: 14px; padding: 21px 24px; background: #f2f5f7; border-bottom: 1px solid var(--border); }
+.login-banner > div:last-child { display: grid; gap: 2px; }
+.login-banner span { color: var(--muted); text-transform: uppercase; font-size: .67rem; font-weight: 900; letter-spacing: .12em; }
+.login-banner h1 { margin: 0; color: var(--navy-950); font-size: 1.35rem; }
+.login-body { padding: 24px; }
+.login-body > p:first-child { margin: 0 0 18px; color: var(--muted); font-size: .9rem; }
+.login-button { width: 100%; min-height: 44px; }
+.demo-hint { margin-top: 17px; padding: 11px 13px; border-radius: 6px; background: #f1f5f8; color: #52616e; font-size: .82rem; line-height: 1.5; }
+.demo-hint strong { display: block; color: var(--navy-900); margin-bottom: 3px; }
+
+.app-footer { display: flex; justify-content: space-between; gap: 16px; padding: 16px clamp(18px,3vw,42px); border-top: 1px solid var(--border); background: #fff; color: var(--muted); font-size: .74rem; }
+#modeBadge { font-weight: 800; }
+.toast { position: fixed; z-index: 6000; right: 20px; bottom: 20px; min-width: 220px; max-width: 380px; padding: 12px 15px; border-radius: 7px; background: #17212b; color: white; box-shadow: 0 14px 40px rgba(0,0,0,.22); transform: translateY(160%); transition: transform .2s ease; }
+.toast.show { transform: translateY(0); }
+
+@media (max-width: 1060px) {
+  .entry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inspection-table-header, .inspection-row { grid-template-columns: 170px minmax(260px, 1fr) 220px 72px; }
+  .entry-bottom-grid, .dashboard-grid, .admin-grid, .grading-rule-grid { grid-template-columns: 1fr; }
+  .stat-grid.four { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 760px) {
+  .app-header { align-items: flex-start; flex-direction: column; }
+  .header-user { width: 100%; justify-content: space-between; }
+  .main-tabs { padding: 0; }
+  .main-tab { min-width: 0; flex: 1; padding: 0 6px; font-size: .78rem; }
+  .main-tab .tab-number { display: none; }
+  .bulk-toolbar { align-items: stretch; flex-direction: column; }
+  .bulk-date-field { width: 100%; flex-basis: auto; }
+  .bulk-actions { justify-content: flex-start; }
+  .threshold-grid { grid-template-columns: 1fr; }
+  .workspace { width: min(100% - 20px, 1320px); margin-top: 16px; }
+  .page-title-row { align-items: flex-start; flex-direction: column; }
+  .legend-items { gap: 6px; }
+  .entry-grid, .stat-grid.four { grid-template-columns: 1fr; }
+  .inspection-table-header { display: none; }
+  .inspection-row { display: grid; grid-template-columns: 1fr 65px; gap: 0; padding: 14px; }
+  .inspection-row > div { padding: 4px 0; }
+  .inspection-area, .inspection-description { grid-column: 1 / -1; }
+  .inspection-row > div:nth-child(3) { padding-right: 10px; }
+  .points-cell { align-self: center; }
+  .overall-score-line { grid-template-columns: 1fr; }
+  .report-toolbar { align-items: stretch; flex-direction: column; }
+}
+
+@media print {
+  .app-header, .main-tabs, .app-footer, .report-toolbar, .report-actions, .subtabs, .toast, .login-overlay { display: none !important; }
+  body { background: white; }
+  .workspace { width: 100%; margin: 0; }
+  .view { display: none !important; }
+  #reportsView.active-view, #historyView.active-report-panel { display: block !important; }
+  .app-panel, .stat-card { box-shadow: none; }
+}
+
+.toast:empty { display: none; }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <div id="appView" class="app-shell app-locked" aria-hidden="true">
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="cap-badge">CAP</div>
+        <div class="header-title">
+          <span>Civil Air Patrol</span>
+          <strong>Uniform Inspection Tracker</strong>
+        </div>
+      </div>
+      <div class="header-user">
+        <span id="signedInAs">Not signed in</span>
+        <button id="logoutBtn" class="header-button" type="button">Sign Out</button>
+      </div>
+    </header>
+
+    <nav class="main-tabs" aria-label="Application navigation">
+      <button class="main-tab active" data-view="inspectionView" type="button">
+        <span class="tab-number">1</span><span>Individual Entry</span>
+      </button>
+      <button class="main-tab" data-view="bulkView" type="button">
+        <span class="tab-number">2</span><span>Bulk Entry</span>
+      </button>
+      <button class="main-tab" data-view="reportsView" type="button">
+        <span class="tab-number">3</span><span>Reports</span>
+      </button>
+      <button id="usersTab" class="main-tab" data-view="usersView" type="button">
+        <span class="tab-number">4</span><span>Administration</span>
+      </button>
+    </nav>
+
+    <main class="workspace">
+      <!-- ============================================================
+           ENTRY TAB
+           Grade = CAP cadet grade/insignia. Inspection Rating = score.
+           ============================================================ -->
+      <section id="inspectionView" class="view active-view">
+        <div class="page-title-row">
+          <div>
+            <div class="page-kicker">INDIVIDUAL ENTRY</div>
+            <h1>Uniform Inspection</h1>
+            <p>Enter the cadet information and score all five inspection areas.</p>
+          </div>
+          <div class="legend-box">
+            <div class="legend-title">POINT VALUES</div>
+            <div class="legend-items">
+              <span><b>0</b> Needs Improvement</span>
+              <span><b>1</b> Satisfactory</span>
+              <span><b>2</b> Excellent</span>
+            </div>
+          </div>
+        </div>
+
+        <form id="inspectionForm" autocomplete="off">
+          <section class="app-panel cadet-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Cadet Information</h2>
+                <p><strong>Grade</strong> means the CAP cadet grade/insignia worn on the uniform.</p>
+              </div>
+              <span class="required-note">* Required</span>
+            </div>
+
+            <div class="entry-grid">
+              <label class="field">
+                <span>Inspection Date *</span>
+                <input id="inspectionDate" type="date" required />
+              </label>
+
+              <label class="field">
+                <span>CAPID *</span>
+                <input id="capid" inputmode="numeric" maxlength="12" required placeholder="123456" />
+              </label>
+
+              <label class="field field-wide">
+                <span>Cadet Name *</span>
+                <input id="cadetName" required placeholder="First Last" />
+              </label>
+
+              <label class="field field-grade">
+                <span>Cadet Grade (Insignia) *</span>
+                <select id="cadetGrade" required>
+                  <option value="">Select cadet grade...</option>
+                  <option value="C/AB">C/AB — Cadet Airman Basic</option>
+                  <option value="C/Amn">C/Amn — Cadet Airman</option>
+                  <option value="C/A1C">C/A1C — Cadet Airman First Class</option>
+                  <option value="C/SrA">C/SrA — Cadet Senior Airman</option>
+                  <option value="C/SSgt">C/SSgt — Cadet Staff Sergeant</option>
+                  <option value="C/TSgt">C/TSgt — Cadet Technical Sergeant</option>
+                  <option value="C/MSgt">C/MSgt — Cadet Master Sergeant</option>
+                  <option value="C/SMSgt">C/SMSgt — Cadet Senior Master Sergeant</option>
+                  <option value="C/CMSgt">C/CMSgt — Cadet Chief Master Sergeant</option>
+                  <option value="C/2d Lt">C/2d Lt — Cadet Second Lieutenant</option>
+                  <option value="C/1st Lt">C/1st Lt — Cadet First Lieutenant</option>
+                  <option value="C/Capt">C/Capt — Cadet Captain</option>
+                  <option value="C/Maj">C/Maj — Cadet Major</option>
+                  <option value="C/Lt Col">C/Lt Col — Cadet Lieutenant Colonel</option>
+                  <option value="C/Col">C/Col — Cadet Colonel</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="gradeRule" class="standards-banner">
+              Select a cadet grade to display the applicable overall inspection standard.
+            </div>
+          </section>
+
+          <section class="app-panel inspection-panel">
+            <div class="panel-heading inspection-panel-heading">
+              <div>
+                <h2>Inspection Areas</h2>
+                <p>Select one rating from each dropdown. Points are calculated automatically.</p>
+              </div>
+              <div class="score-max">5 areas × 2 points = <strong>10 max</strong></div>
+            </div>
+
+            <div class="inspection-table" id="criteriaContainer">
+              <div class="inspection-table-header" aria-hidden="true">
+                <div>Inspection Area</div>
+                <div>Evaluation Criteria</div>
+                <div>Rating</div>
+                <div>Points</div>
+              </div>
+
+              <div class="inspection-row" data-criterion="personal_appearance">
+                <div class="inspection-area">
+                  <strong>Personal Appearance</strong>
+                </div>
+                <div class="inspection-description">Haircut, tapered appearance, sideburns, clean overall appearance, cosmetics, and shave.</div>
+                <div>
+                  <select class="inspection-rating" id="personal_appearance" name="personal_appearance" required>
+                    <option value="">Select rating...</option>
+                    <option value="0">Needs Improvement</option>
+                    <option value="1">Satisfactory</option>
+                    <option value="2">Excellent</option>
+                  </select>
+                </div>
+                <div class="points-cell"><span class="row-points" data-score-output="personal_appearance">—</span><small>/2</small></div>
+              </div>
+
+              <div class="inspection-row" data-criterion="garments">
+                <div class="inspection-area"><strong>Garments</strong></div>
+                <div class="inspection-description">Clean, sized appropriately, pressed/ironed, free of lint and loose strings, and shirt properly tucked.</div>
+                <div>
+                  <select class="inspection-rating" id="garments" name="garments" required>
+                    <option value="">Select rating...</option>
+                    <option value="0">Needs Improvement</option>
+                    <option value="1">Satisfactory</option>
+                    <option value="2">Excellent</option>
+                  </select>
+                </div>
+                <div class="points-cell"><span class="row-points" data-score-output="garments">—</span><small>/2</small></div>
+              </div>
+
+              <div class="inspection-row" data-criterion="accoutrements">
+                <div class="inspection-area"><strong>Accoutrements</strong></div>
+                <div class="inspection-description">Patches, insignia, ribbon order and placement, and gig line.</div>
+                <div>
+                  <select class="inspection-rating" id="accoutrements" name="accoutrements" required>
+                    <option value="">Select rating...</option>
+                    <option value="0">Needs Improvement</option>
+                    <option value="1">Satisfactory</option>
+                    <option value="2">Excellent</option>
+                  </select>
+                </div>
+                <div class="points-cell"><span class="row-points" data-score-output="accoutrements">—</span><small>/2</small></div>
+              </div>
+
+              <div class="inspection-row" data-criterion="footwear">
+                <div class="inspection-area"><strong>Footwear</strong></div>
+                <div class="inspection-description">Shined or brushed as appropriate, clean of mud/debris, and pants properly bloused when required.</div>
+                <div>
+                  <select class="inspection-rating" id="footwear" name="footwear" required>
+                    <option value="">Select rating...</option>
+                    <option value="0">Needs Improvement</option>
+                    <option value="1">Satisfactory</option>
+                    <option value="2">Excellent</option>
+                  </select>
+                </div>
+                <div class="points-cell"><span class="row-points" data-score-output="footwear">—</span><small>/2</small></div>
+              </div>
+
+              <div class="inspection-row" data-criterion="military_bearing">
+                <div class="inspection-area"><strong>Military Bearing</strong></div>
+                <div class="inspection-description">Posture, military courtesies, focus on task, and attentiveness to the evaluator.</div>
+                <div>
+                  <select class="inspection-rating" id="military_bearing" name="military_bearing" required>
+                    <option value="">Select rating...</option>
+                    <option value="0">Needs Improvement</option>
+                    <option value="1">Satisfactory</option>
+                    <option value="2">Excellent</option>
+                  </select>
+                </div>
+                <div class="points-cell"><span class="row-points" data-score-output="military_bearing">—</span><small>/2</small></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="entry-bottom-grid">
+            <div class="app-panel notes-panel">
+              <label class="field">
+                <span>Evaluator Notes <small>(optional)</small></span>
+                <textarea id="notes" rows="5" placeholder="Document discrepancies, corrections, or other useful notes..."></textarea>
+              </label>
+            </div>
+
+            <div class="app-panel total-panel">
+              <div class="overall-heading">Overall Inspection Result</div>
+              <div class="overall-score-line">
+                <div>
+                  <span class="overall-label">TOTAL SCORE</span>
+                  <div class="score-number"><span id="totalScore">0</span><small>/10</small></div>
+                </div>
+                <div>
+                  <span class="overall-label">INSPECTION RATING</span>
+                  <div id="overallRating" class="status-badge neutral">Incomplete</div>
+                </div>
+                <div>
+                  <span class="overall-label">RESULT</span>
+                  <div id="passStatus" class="status-badge neutral">NOT SCORED</div>
+                </div>
+              </div>
+              <button id="saveInspectionBtn" class="primary submit-button" type="submit">Submit Inspection</button>
+            </div>
+          </section>
+
+          <p id="inspectionMessage" class="form-message"></p>
+        </form>
+      </section>
+
+      <!-- ============================================================
+           BULK ENTRY TAB
+           ============================================================ -->
+      <section id="bulkView" class="view">
+        <div class="page-title-row">
+          <div>
+            <div class="page-kicker">BULK ENTRY</div>
+            <h1>Group Uniform Inspection</h1>
+            <p>Enter multiple cadets on one worksheet. Each row is scored independently using the cadet's grade.</p>
+          </div>
+          <div class="legend-box">
+            <div class="legend-title">POINT VALUES</div>
+            <div class="legend-items">
+              <span><b>0</b> Needs Improvement</span>
+              <span><b>1</b> Satisfactory</span>
+              <span><b>2</b> Excellent</span>
+            </div>
+          </div>
+        </div>
+
+        <section class="app-panel bulk-toolbar-panel">
+          <div class="bulk-toolbar">
+            <label class="field bulk-date-field">
+              <span>Inspection Date *</span>
+              <input id="bulkInspectionDate" type="date" required />
+            </label>
+            <div class="bulk-actions">
+              <button id="bulkAddRowBtn" class="secondary" type="button">Add Row</button>
+              <button id="bulkAdd10Btn" class="secondary" type="button">Add 10 Rows</button>
+              <button id="bulkClearBtn" class="secondary" type="button">Clear Table</button>
+              <button id="bulkSubmitBtn" class="primary" type="button">Submit All Inspections</button>
+            </div>
+          </div>
+          <p class="bulk-help">Blank rows are ignored. Partially completed rows are highlighted before submission.</p>
+        </section>
+
+        <section class="app-panel bulk-panel">
+          <div class="table-wrap bulk-table-wrap">
+            <table class="bulk-table" aria-label="Bulk uniform inspection entry">
+              <thead>
+                <tr>
+                  <th>CAPID</th>
+                  <th>Name</th>
+                  <th>Cadet Grade</th>
+                  <th title="Personal Appearance">Personal Appearance</th>
+                  <th>Garments</th>
+                  <th>Accoutrements</th>
+                  <th>Footwear</th>
+                  <th title="Military Bearing">Military Bearing</th>
+                  <th>Total Score</th>
+                  <th>Result</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="bulkTableBody"></tbody>
+            </table>
+          </div>
+          <div class="bulk-footer">
+            <span id="bulkRowCount">0 inspections ready</span>
+            <span id="bulkMessage" class="form-message"></span>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============================================================
+           REPORTS TAB
+           ============================================================ -->
+      <section id="reportsView" class="view">
+        <div class="page-title-row">
+          <div>
+            <div class="page-kicker">REPORTS</div>
+            <h1>Inspection Reports</h1>
+            <p>Review individual cadet history and unit-wide inspection performance.</p>
+          </div>
+          <div class="subtabs" role="tablist" aria-label="Report type">
+            <button class="subtab active" data-report="historyView" type="button">Individual Cadet</button>
+            <button class="subtab" data-report="dashboardView" type="button">Unit Overview</button>
+          </div>
+        </div>
+
+        <section id="historyView" class="report-panel active-report-panel">
+          <div class="app-panel report-toolbar">
+            <label class="field grow">
+              <span>Select Cadet</span>
+              <select id="historyCadetSelect"><option value="">Select cadet...</option></select>
+            </label>
+            <button id="printCadetBtn" class="secondary" type="button">Print Report</button>
+            <button id="exportCadetBtn" class="secondary" type="button">Export CSV</button>
+          </div>
+
+          <div id="historyEmpty" class="empty-state">Select a cadet to view inspection history.</div>
+          <div id="historyContent" class="hidden">
+            <div class="stat-grid four" id="cadetStats"></div>
+            <div class="app-panel chart-card">
+              <h2>Score Trend</h2>
+              <canvas id="cadetTrendChart" height="110"></canvas>
+            </div>
+            <div class="app-panel report-table-card">
+              <h2>Inspection History</h2>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th><th>Cadet Grade</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Total</th><th>Inspection Rating</th><th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody id="historyTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="dashboardView" class="report-panel">
+          <div class="report-actions"><button id="exportAllBtn" class="secondary" type="button">Export All CSV</button></div>
+          <div id="dashboardStats" class="stat-grid four"></div>
+          <div class="dashboard-grid">
+            <div class="app-panel chart-card"><h2>Average Score Over Time</h2><canvas id="monthlyTrendChart" height="130"></canvas></div>
+            <div class="app-panel chart-card"><h2>Average by Inspection Area</h2><canvas id="categoryChart" height="130"></canvas></div>
+            <div class="app-panel chart-card"><h2>Overall Inspection Ratings</h2><canvas id="ratingChart" height="130"></canvas></div>
+            <div class="app-panel"><h2>Program Notes</h2><div id="programInsights" class="insight-list"></div></div>
+          </div>
+          <div class="app-panel">
+            <h2>Recent Inspections</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Date</th><th>CAPID</th><th>Name</th><th>Cadet Grade</th><th>Score</th><th>Inspection Rating</th><th>Result</th></tr></thead>
+                <tbody id="recentTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- ============================================================
+           ADMINISTRATION TAB
+           ============================================================ -->
+      <section id="usersView" class="view">
+        <div class="page-title-row">
+          <div>
+            <div class="page-kicker">ADMINISTRATION</div>
+            <h1>Administration</h1>
+            <p>Manage authorized application users. Administrator access is required.</p>
+          </div>
+        </div>
+
+        <div class="admin-stack">
+          <form id="gradingRulesForm" class="app-panel grading-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Inspection Grading Standards</h2>
+                <p>Change the score thresholds without editing the application. All inspection entry screens use these values.</p>
+              </div>
+            </div>
+            <div class="grading-rule-grid">
+              <div class="grading-rule-card">
+                <div class="grading-rule-title">Cadet Airmen <small>C/AB through C/SrA</small></div>
+                <div class="threshold-grid">
+                  <label class="field"><span>Minimum Passing Score</span><input id="airmanPassMin" type="number" min="0" max="10" required /></label>
+                  <label class="field"><span>Minimum Excellent Score</span><input id="airmanExcellentMin" type="number" min="0" max="10" required /></label>
+                </div>
+                <div id="airmanRulePreview" class="rule-preview"></div>
+              </div>
+              <div class="grading-rule-card">
+                <div class="grading-rule-title">Cadet NCOs & Officers <small>C/SSgt through C/Col</small></div>
+                <div class="threshold-grid">
+                  <label class="field"><span>Minimum Passing Score</span><input id="ncoPassMin" type="number" min="0" max="10" required /></label>
+                  <label class="field"><span>Minimum Excellent Score</span><input id="ncoExcellentMin" type="number" min="0" max="10" required /></label>
+                </div>
+                <div id="ncoRulePreview" class="rule-preview"></div>
+              </div>
+            </div>
+            <div class="admin-form-actions">
+              <button class="primary" type="submit">Save Grading Standards</button>
+              <button id="resetRulesBtn" class="secondary" type="button">Restore Original App Defaults</button>
+              <span id="gradingRulesMessage" class="form-message"></span>
+            </div>
+          </form>
+
+          <div class="admin-grid">
+            <form id="createUserForm" class="app-panel stack">
+              <div class="panel-heading"><div><h2>Add User</h2><p>Create an inspector or administrator account.</p></div></div>
+              <label class="field"><span>Display Name</span><input id="newUserName" required /></label>
+              <label class="field"><span>Email</span><input id="newUserEmail" type="email" required /></label>
+              <label class="field"><span>Temporary Password</span><input id="newUserPassword" type="password" minlength="8" required /></label>
+              <label class="field">
+                <span>Role</span>
+                <select id="newUserRole">
+                  <option value="inspector">Inspector</option>
+                  <option value="admin">Administrator</option>
+                </select>
+              </label>
+              <button class="primary" type="submit">Create User</button>
+              <p id="userMessage" class="form-message"></p>
+            </form>
+
+            <div class="app-panel">
+              <div class="panel-heading"><div><h2>Authorized Users</h2><p>Accounts currently authorized to use the inspection application.</p></div></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead>
+                  <tbody id="usersTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span id="modeBadge"></span>
+      <span>CAP Uniform Inspection Tracker</span>
+    </footer>
+  </div>
+
+  <!-- Login appears first and blocks access to the application until authenticated. -->
+  <section id="loginView" class="login-overlay" aria-label="Sign in">
+    <div class="login-window" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="login-banner">
+        <div class="cap-badge large">CAP</div>
+        <div>
+          <span>Civil Air Patrol</span>
+          <h1 id="loginTitle">Uniform Inspection Tracker</h1>
+        </div>
+      </div>
+
+      <div class="login-body">
+        <p>Sign in to access inspection entry, reports, and administration.</p>
+        <form id="loginForm" class="stack">
+          <label class="field"><span>Email / Username</span><input id="loginEmail" autocomplete="username" autofocus required /></label>
+          <label class="field"><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+          <button class="primary login-button" type="submit">Sign In</button>
+        </form>
+        <div id="demoHint" class="demo-hint hidden">
+          <strong>Demo login</strong>
+          <div><code>admin@cap.local</code></div>
+          <div><code>CAPinspect2026!</code></div>
+        </div>
+        <p id="loginMessage" class="form-message"></p>
+      </div>
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script>window.CAP_APP_CONFIG = window.CAP_APP_CONFIG || { mode: "demo" };</script>
+  <script src="config.js"></script>
+  <script>
+(() => {
+  'use strict';
+
+  const CONFIG = window.CAP_APP_CONFIG || { mode: 'demo' };
+  const isDemo = CONFIG.mode !== 'supabase';
+  let sb = null;
+  let currentProfile = null;
+  let chartCadet = null;
+  let chartMonthly = null;
+  let chartCategory = null;
+  let chartRating = null;
+  let gradingRules = null;
+  let bulkRowSerial = 0;
+
+  const GRADES = [
+    { value: 'C/AB', label: 'C/AB — Cadet Airman Basic', group: 'airman' },
+    { value: 'C/Amn', label: 'C/Amn — Cadet Airman', group: 'airman' },
+    { value: 'C/A1C', label: 'C/A1C — Cadet Airman First Class', group: 'airman' },
+    { value: 'C/SrA', label: 'C/SrA — Cadet Senior Airman', group: 'airman' },
+    { value: 'C/SSgt', label: 'C/SSgt — Cadet Staff Sergeant', group: 'nco_officer' },
+    { value: 'C/TSgt', label: 'C/TSgt — Cadet Technical Sergeant', group: 'nco_officer' },
+    { value: 'C/MSgt', label: 'C/MSgt — Cadet Master Sergeant', group: 'nco_officer' },
+    { value: 'C/SMSgt', label: 'C/SMSgt — Cadet Senior Master Sergeant', group: 'nco_officer' },
+    { value: 'C/CMSgt', label: 'C/CMSgt — Cadet Chief Master Sergeant', group: 'nco_officer' },
+    { value: 'C/2d Lt', label: 'C/2d Lt — Cadet Second Lieutenant', group: 'nco_officer' },
+    { value: 'C/1st Lt', label: 'C/1st Lt — Cadet First Lieutenant', group: 'nco_officer' },
+    { value: 'C/Capt', label: 'C/Capt — Cadet Captain', group: 'nco_officer' },
+    { value: 'C/Maj', label: 'C/Maj — Cadet Major', group: 'nco_officer' },
+    { value: 'C/Lt Col', label: 'C/Lt Col — Cadet Lieutenant Colonel', group: 'nco_officer' },
+    { value: 'C/Col', label: 'C/Col — Cadet Colonel', group: 'nco_officer' }
+  ];
+
+  const CRITERIA = [
+    { key: 'personal_appearance', title: 'Personal Appearance', description: 'Haircut, tapered appearance, sideburns, clean overall appearance, cosmetics, and shave.' },
+    { key: 'garments', title: 'Garments', description: 'Clean, sized appropriately, pressed/ironed, free of lint and loose strings, and shirt properly tucked.' },
+    { key: 'accoutrements', title: 'Accoutrements', description: 'Patches, insignia, ribbon order, placement, and gig line.' },
+    { key: 'footwear', title: 'Footwear', description: 'Shined or brushed as appropriate, free of mud/debris, and pants properly bloused when required.' },
+    { key: 'military_bearing', title: 'Military Bearing', description: 'Posture, military courtesies, focus on task, and attentiveness to the evaluator.' }
+  ];
+
+  const SCORE_LABELS = ['Needs Improvement', 'Satisfactory', 'Excellent'];
+  const DEFAULT_GRADING_RULES = {
+    airman: { passing_min: 4, excellent_min: 6 },
+    nco_officer: { passing_min: 5, excellent_min: 8 }
+  };
+  const $ = (id) => document.getElementById(id);
+
+  const LS = {
+    users: 'cap_uniform_demo_users_v1',
+    session: 'cap_uniform_demo_session_v1',
+    cadets: 'cap_uniform_demo_cadets_v1',
+    inspections: 'cap_uniform_demo_inspections_v1',
+    gradingRules: 'cap_uniform_demo_grading_rules_v1'
+  };
+
+  const memoryStore = {};
+
+  document.addEventListener('DOMContentLoaded', init);
+
+  async function init() {
+    populateGrades();
+    renderCriteria();
+    bindUI();
+    $('inspectionDate').value = localDateISO();
+    $('bulkInspectionDate').value = localDateISO();
+    $('modeBadge').textContent = isDemo ? 'Demo / browser-only storage' : 'Supabase shared database';
+
+    if (isDemo) {
+      $('demoHint').classList.remove('hidden');
+      await ensureDemoAdmin();
+    } else {
+      if (!CONFIG.supabaseUrl || !CONFIG.supabasePublishableKey) {
+        $('loginMessage').textContent = 'Supabase mode is enabled, but config.js is missing the project URL or publishable key.';
+        $('loginMessage').className = 'form-message error';
+        return;
+      }
+      sb = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabasePublishableKey);
+    }
+
+    gradingRules = isDemo ? loadDemoGradingRules() : cloneDefaultRules();
+    seedBulkRows(8);
+    updateGradingRuleForm();
+    updateLiveScore();
+
+    // Always require an explicit login when the page is opened. This is safer for
+    // shared squadron computers and keeps the initial workflow predictable.
+    showLogin();
+  }
+
+  function bindUI() {
+    $('loginForm').addEventListener('submit', handleLogin);
+    $('logoutBtn').addEventListener('click', handleLogout);
+    document.querySelectorAll('.main-tab').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+    document.querySelectorAll('.subtab').forEach(btn => btn.addEventListener('click', () => switchReport(btn.dataset.report)));
+    $('cadetGrade').addEventListener('change', updateLiveScore);
+    $('capid').addEventListener('blur', autofillCadet);
+    $('inspectionForm').addEventListener('submit', saveInspectionFromForm);
+    $('historyCadetSelect').addEventListener('change', renderSelectedCadetHistory);
+    $('printCadetBtn').addEventListener('click', () => window.print());
+    $('exportCadetBtn').addEventListener('click', exportSelectedCadetCSV);
+    $('exportAllBtn').addEventListener('click', exportAllCSV);
+    $('createUserForm').addEventListener('submit', handleCreateUser);
+    $('bulkAddRowBtn').addEventListener('click', () => addBulkRow());
+    $('bulkAdd10Btn').addEventListener('click', () => seedBulkRows(10));
+    $('bulkClearBtn').addEventListener('click', clearBulkTable);
+    $('bulkSubmitBtn').addEventListener('click', saveBulkInspections);
+    $('gradingRulesForm').addEventListener('submit', handleSaveGradingRules);
+    $('resetRulesBtn').addEventListener('click', restoreDefaultGradingRules);
+    ['airmanPassMin','airmanExcellentMin','ncoPassMin','ncoExcellentMin'].forEach(id => $(id).addEventListener('input', previewGradingRules));
+  }
+
+  function populateGrades() {
+    // The complete grade list is written directly into index.html so the
+    // dropdown is visible even before JavaScript executes. Repair it only
+    // if a customized page removed the options.
+    const sel = $('cadetGrade');
+    if (!sel) return;
+    if (sel.options.length <= 1) {
+      sel.innerHTML = '<option value="">Select cadet grade...</option>' +
+        GRADES.map(g => `<option value="${g.value}">${g.label}</option>`).join('');
+    }
+  }
+
+  function renderCriteria() {
+    // Inspection controls are also explicit HTML dropdowns. JavaScript only
+    // wires them to the live score calculator.
+    document.querySelectorAll('.inspection-rating').forEach(el => {
+      el.addEventListener('change', updateLiveScore);
+    });
+    updateLiveScore();
+  }
+
+  function localDateISO(date = new Date()) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  function gradeGroup(grade) {
+    return GRADES.find(g => g.value === grade)?.group || 'airman';
+  }
+
+  function calculateRating(group, total) {
+    const rules = (gradingRules && gradingRules[group]) || DEFAULT_GRADING_RULES[group] || DEFAULT_GRADING_RULES.airman;
+    if (total < Number(rules.passing_min)) return { rating: 'Needs Improvement', passed: false };
+    if (total < Number(rules.excellent_min)) return { rating: 'Satisfactory', passed: true };
+    return { rating: 'Excellent', passed: true };
+  }
+
+  function cloneDefaultRules() {
+    return JSON.parse(JSON.stringify(DEFAULT_GRADING_RULES));
+  }
+
+  function ruleText(group, prefix = '') {
+    const r = (gradingRules && gradingRules[group]) || DEFAULT_GRADING_RULES[group];
+    const failMax = Math.max(0, Number(r.passing_min) - 1);
+    const satMax = Math.max(Number(r.passing_min), Number(r.excellent_min) - 1);
+    return `${prefix}0–${failMax} Needs Improvement (not passing), ${r.passing_min}–${satMax} Satisfactory (passing), ${r.excellent_min}–10 Excellent (passing).`;
+  }
+
+
+  function getScoresFromForm() {
+    const scores = {};
+    let complete = true;
+    for (const c of CRITERIA) {
+      const selected = document.querySelector(`select[name="${c.key}"]`);
+      const hasValue = selected && selected.value !== '';
+      if (!hasValue) complete = false;
+      scores[c.key] = hasValue ? Number(selected.value) : 0;
+    }
+    return { scores, complete };
+  }
+
+  function updateLiveScore() {
+    const { scores, complete } = getScoresFromForm();
+    const total = Object.values(scores).reduce((a, b) => a + b, 0);
+
+    // Show the numeric point value beside every inspection dropdown.
+    for (const c of CRITERIA) {
+      const select = document.querySelector(`select[name="${c.key}"]`);
+      const output = document.querySelector(`[data-score-output="${c.key}"]`);
+      const row = document.querySelector(`[data-criterion="${c.key}"]`);
+      if (output) output.textContent = select && select.value !== '' ? select.value : '—';
+      if (row) {
+        if (select && select.value !== '') row.dataset.score = select.value;
+        else row.removeAttribute('data-score');
+      }
+    }
+
+    const group = gradeGroup($('cadetGrade').value);
+    const result = calculateRating(group, total);
+    $('totalScore').textContent = String(total);
+
+    const rating = $('overallRating');
+    const pass = $('passStatus');
+    if (!complete) {
+      rating.textContent = 'Incomplete';
+      rating.className = 'status-badge neutral';
+      pass.textContent = 'NOT SCORED';
+      pass.className = 'status-badge neutral';
+    } else {
+      rating.textContent = result.rating;
+      rating.className = `status-badge ${ratingClass(result.rating)}`;
+      pass.textContent = result.passed ? 'PASSING' : 'NOT PASSING';
+      pass.className = `status-badge ${result.passed ? 'pass' : 'fail'}`;
+    }
+
+    const grade = $('cadetGrade').value;
+    if (!grade) {
+      $('gradeRule').textContent = 'Select a grade to display the applicable passing standard.';
+    } else if (group === 'airman') {
+      $('gradeRule').innerHTML = `<strong>Airman standard:</strong> ${ruleText('airman')}`;
+    } else {
+      $('gradeRule').innerHTML = `<strong>NCO / Officer standard:</strong> ${ruleText('nco_officer')}`;
+    }
+  }
+
+  function ratingClass(rating) {
+    if (rating === 'Excellent') return 'excellent';
+    if (rating === 'Satisfactory') return 'satisfactory';
+    return 'needs';
+  }
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    setMessage('loginMessage', '', '');
+    const email = $('loginEmail').value.trim().toLowerCase();
+    const password = $('loginPassword').value;
+    try {
+      let profile;
+      if (isDemo) {
+        const users = loadLS(LS.users, []);
+        const hash = await hashPassword(password);
+        const user = users.find(u => u.email.toLowerCase() === email && u.password_hash === hash);
+        if (!user) throw new Error('Invalid username or password.');
+        saveSession(user.id);
+        profile = stripPassword(user);
+      } else {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        profile = await loadSupabaseProfile(data.user.id);
+      }
+      await enterApp(profile);
+    } catch (err) {
+      setMessage('loginMessage', err.message || String(err), 'error');
+    }
+  }
+
+  async function handleLogout() {
+    if (isDemo) removeSession();
+    else await sb.auth.signOut();
+    currentProfile = null;
+    showLogin();
+  }
+
+  async function getCurrentProfile() {
+    if (isDemo) {
+      const id = loadSession();
+      if (!id) return null;
+      const user = loadLS(LS.users, []).find(u => u.id === id);
+      return user ? stripPassword(user) : null;
+    }
+    const { data } = await sb.auth.getSession();
+    if (!data.session?.user) return null;
+    return loadSupabaseProfile(data.session.user.id);
+  }
+
+  async function loadSupabaseProfile(id) {
+    const { data, error } = await sb.from('profiles').select('*').eq('id', id).single();
+    if (error) throw new Error(`Signed in, but no authorized profile was found: ${error.message}`);
+    return data;
+  }
+
+  async function enterApp(profile) {
+    currentProfile = profile;
+    try { gradingRules = await loadGradingRules(); } catch (err) { console.warn('Could not load grading rules; using defaults.', err); gradingRules = cloneDefaultRules(); }
+    updateGradingRuleForm();
+    updateLiveScore();
+    refreshAllBulkRows();
+    $('loginView').classList.add('hidden');
+    $('appView').classList.remove('app-locked');
+    $('appView').setAttribute('aria-hidden', 'false');
+    $('appView').inert = false;
+    $('signedInAs').textContent = `${profile.display_name || profile.email} · ${profile.role}`;
+    $('usersTab').classList.toggle('admin-disabled', profile.role !== 'admin');
+    $('usersTab').setAttribute('aria-disabled', profile.role !== 'admin' ? 'true' : 'false');
+    $('usersTab').title = profile.role === 'admin' ? 'Administration' : 'Administrator access required';
+    switchView('inspectionView');
+    await refreshCadetSelectors();
+    if (profile.role === 'admin') await refreshUsers();
+    setTimeout(() => $('capid').focus(), 0);
+  }
+
+  function showLogin() {
+    $('appView').classList.add('app-locked');
+    $('appView').setAttribute('aria-hidden', 'true');
+    $('appView').inert = true;
+    $('loginView').classList.remove('hidden');
+    $('signedInAs').textContent = 'Not signed in';
+    $('loginPassword').value = '';
+    setTimeout(() => $('loginEmail').focus(), 0);
+  }
+
+  function switchView(viewId) {
+    if (viewId === 'usersView' && currentProfile?.role !== 'admin') {
+      toast('Administrator access required');
+      return;
+    }
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active-view'));
+    document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+    $(viewId).classList.add('active-view');
+    document.querySelector(`.main-tab[data-view="${viewId}"]`)?.classList.add('active');
+    if (viewId === 'bulkView') {
+      if (!$('bulkTableBody').children.length) seedBulkRows(8);
+      refreshAllBulkRows();
+      setTimeout(() => $('bulkTableBody').querySelector('.bulk-capid')?.focus(), 0);
+    }
+    if (viewId === 'reportsView') switchReport('historyView');
+    if (viewId === 'usersView') { refreshUsers(); updateGradingRuleForm(); }
+  }
+
+  function switchReport(reportId) {
+    document.querySelectorAll('.report-panel').forEach(v => v.classList.remove('active-report-panel'));
+    document.querySelectorAll('.subtab').forEach(t => t.classList.remove('active'));
+    $(reportId)?.classList.add('active-report-panel');
+    document.querySelector(`.subtab[data-report="${reportId}"]`)?.classList.add('active');
+    if (reportId === 'historyView') {
+      refreshCadetSelectors();
+      if ($('historyCadetSelect').value) renderSelectedCadetHistory();
+    }
+    if (reportId === 'dashboardView') renderDashboard();
+  }
+
+  function gradeOptionsHtml(selected = '') {
+    return '<option value="">Select grade...</option>' + GRADES.map(g => `<option value="${escapeHtml(g.value)}" ${g.value === selected ? 'selected' : ''}>${escapeHtml(g.value)}</option>`).join('');
+  }
+
+  function ratingOptionsHtml(selected = '') {
+    return '<option value="">Select...</option>' + SCORE_LABELS.map((label, score) => `<option value="${score}" ${String(score) === String(selected) ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+  }
+
+  function seedBulkRows(count = 8) {
+    for (let i = 0; i < count; i++) addBulkRow();
+    updateBulkSummary();
+  }
+
+  function addBulkRow(data = {}) {
+    const tbody = $('bulkTableBody');
+    const tr = document.createElement('tr');
+    tr.className = 'bulk-entry-row';
+    tr.dataset.rowId = String(++bulkRowSerial);
+    tr.innerHTML = `
+      <td><input class="bulk-capid" inputmode="numeric" maxlength="12" value="${escapeHtml(data.capid || '')}" placeholder="CAPID"></td>
+      <td><input class="bulk-name" value="${escapeHtml(data.name || '')}" placeholder="Cadet name"></td>
+      <td><select class="bulk-grade">${gradeOptionsHtml(data.grade || '')}</select></td>
+      ${CRITERIA.map(c => `<td><select class="bulk-rating" data-key="${c.key}" title="${escapeHtml(c.title + ': ' + c.description)}">${ratingOptionsHtml(data[c.key] ?? '')}</select></td>`).join('')}
+      <td><span class="bulk-score">0/10</span></td>
+      <td><span class="bulk-result incomplete">Incomplete</span></td>
+      <td><button class="bulk-remove" type="button" title="Remove row">×</button></td>`;
+    tbody.appendChild(tr);
+    tr.querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => { tr.classList.remove('bulk-row-error'); updateBulkRow(tr); }));
+    tr.querySelector('.bulk-capid').addEventListener('blur', () => autofillBulkCadet(tr));
+    tr.querySelector('.bulk-remove').addEventListener('click', () => { tr.remove(); updateBulkSummary(); });
+    updateBulkRow(tr);
+    return tr;
+  }
+
+  function getBulkRowData(tr) {
+    const scores = {};
+    let scoresComplete = true;
+    tr.querySelectorAll('.bulk-rating').forEach(sel => {
+      if (sel.value === '') scoresComplete = false;
+      scores[sel.dataset.key] = sel.value === '' ? 0 : Number(sel.value);
+    });
+    const capid = tr.querySelector('.bulk-capid').value.trim();
+    const name = tr.querySelector('.bulk-name').value.trim();
+    const grade = tr.querySelector('.bulk-grade').value;
+    const blank = !capid && !name && !grade && [...tr.querySelectorAll('.bulk-rating')].every(s => s.value === '');
+    const complete = Boolean(capid && name && grade && scoresComplete);
+    const total = Object.values(scores).reduce((a,b) => a + Number(b), 0);
+    const group = gradeGroup(grade);
+    const result = calculateRating(group, total);
+    return { capid, name, grade, scores, blank, complete, total, group, result };
+  }
+
+  function updateBulkRow(tr) {
+    const row = getBulkRowData(tr);
+    tr.querySelector('.bulk-score').textContent = `${row.total}/10`;
+    const resultEl = tr.querySelector('.bulk-result');
+    if (!row.complete) {
+      resultEl.textContent = 'Incomplete';
+      resultEl.className = 'bulk-result incomplete';
+    } else {
+      resultEl.textContent = row.result.passed ? 'PASS' : 'FAIL';
+      resultEl.className = `bulk-result ${row.result.passed ? 'pass' : 'fail'}`;
+      resultEl.title = row.result.rating;
+    }
+    updateBulkSummary();
+  }
+
+  function refreshAllBulkRows() {
+    document.querySelectorAll('.bulk-entry-row').forEach(updateBulkRow);
+  }
+
+  function updateBulkSummary() {
+    const rows = [...document.querySelectorAll('.bulk-entry-row')].map(getBulkRowData);
+    const ready = rows.filter(r => r.complete).length;
+    const partial = rows.filter(r => !r.blank && !r.complete).length;
+    $('bulkRowCount').textContent = `${ready} inspection${ready === 1 ? '' : 's'} ready${partial ? ` · ${partial} incomplete row${partial === 1 ? '' : 's'}` : ''}`;
+  }
+
+  async function autofillBulkCadet(tr) {
+    const capid = tr.querySelector('.bulk-capid').value.trim();
+    if (!capid) return;
+    try {
+      const cadets = await listCadets();
+      const cadet = cadets.find(c => c.capid === capid);
+      if (cadet) {
+        tr.querySelector('.bulk-name').value = cadet.name;
+        tr.querySelector('.bulk-grade').value = cadet.grade;
+        updateBulkRow(tr);
+      }
+    } catch (err) { console.warn(err); }
+  }
+
+  function clearBulkTable() {
+    if ([...document.querySelectorAll('.bulk-entry-row input,.bulk-entry-row select')].some(el => el.value)) {
+      if (!confirm('Clear all bulk-entry rows? Unsaved entries will be lost.')) return;
+    }
+    $('bulkTableBody').innerHTML = '';
+    bulkRowSerial = 0;
+    $('bulkInspectionDate').value = localDateISO();
+    setMessage('bulkMessage', '', '');
+    seedBulkRows(8);
+  }
+
+  async function saveBulkInspections() {
+    setMessage('bulkMessage', '', '');
+    const date = $('bulkInspectionDate').value;
+    if (!date) return setMessage('bulkMessage', 'Choose an inspection date.', 'error');
+    const trs = [...document.querySelectorAll('.bulk-entry-row')];
+    const parsed = trs.map(tr => ({ tr, row: getBulkRowData(tr) }));
+    const partial = parsed.filter(x => !x.row.blank && !x.row.complete);
+    trs.forEach(tr => tr.classList.remove('bulk-row-error'));
+    partial.forEach(x => x.tr.classList.add('bulk-row-error'));
+    if (partial.length) {
+      setMessage('bulkMessage', `Complete or clear ${partial.length} highlighted row${partial.length === 1 ? '' : 's'} before submitting.`, 'error');
+      partial[0].tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    const ready = parsed.filter(x => x.row.complete);
+    if (!ready.length) return setMessage('bulkMessage', 'There are no completed inspections to submit.', 'error');
+
+    const button = $('bulkSubmitBtn');
+    button.disabled = true;
+    button.textContent = `Saving ${ready.length}...`;
+    let saved = 0;
+    try {
+      for (const { row } of ready) {
+        const cadet = await upsertCadet({ capid: row.capid, name: row.name, grade: row.grade });
+        await insertInspection({
+          cadet_id: cadet.id,
+          inspection_date: date,
+          grade_at_inspection: row.grade,
+          grade_group: row.group,
+          ...row.scores,
+          notes: null,
+          evaluator_id: currentProfile.id,
+          total_score: row.total,
+          overall_rating: row.result.rating,
+          passed: row.result.passed
+        });
+        saved++;
+      }
+      setMessage('bulkMessage', `Saved ${saved} inspection${saved === 1 ? '' : 's'}.`, 'success');
+      toast(`${saved} inspections saved`);
+      $('bulkTableBody').innerHTML = '';
+      bulkRowSerial = 0;
+      seedBulkRows(8);
+      await refreshCadetSelectors();
+    } catch (err) {
+      setMessage('bulkMessage', `Saved ${saved} before an error occurred: ${err.message || err}`, 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Submit All Inspections';
+    }
+  }
+
+  function loadDemoGradingRules() {
+    const stored = loadLS(LS.gradingRules, null);
+    if (!stored?.airman || !stored?.nco_officer) return cloneDefaultRules();
+    return stored;
+  }
+
+  async function loadGradingRules() {
+    if (isDemo) return loadDemoGradingRules();
+    const { data, error } = await sb.from('grading_rules').select('grade_group,passing_min,excellent_min');
+    if (error) throw error;
+    const rules = cloneDefaultRules();
+    (data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
+    return rules;
+  }
+
+  function updateGradingRuleForm() {
+    const rules = gradingRules || cloneDefaultRules();
+    if (!$('airmanPassMin')) return;
+    $('airmanPassMin').value = rules.airman.passing_min;
+    $('airmanExcellentMin').value = rules.airman.excellent_min;
+    $('ncoPassMin').value = rules.nco_officer.passing_min;
+    $('ncoExcellentMin').value = rules.nco_officer.excellent_min;
+    previewGradingRules();
+  }
+
+  function readRulesFromAdminForm() {
+    return {
+      airman: { passing_min: Number($('airmanPassMin').value), excellent_min: Number($('airmanExcellentMin').value) },
+      nco_officer: { passing_min: Number($('ncoPassMin').value), excellent_min: Number($('ncoExcellentMin').value) }
+    };
+  }
+
+  function validateRule(rule) {
+    return Number.isInteger(rule.passing_min) && Number.isInteger(rule.excellent_min) && rule.passing_min >= 0 && rule.excellent_min <= 10 && rule.passing_min <= rule.excellent_min;
+  }
+
+  function previewGradingRules() {
+    if (!$('airmanRulePreview')) return;
+    const candidate = readRulesFromAdminForm();
+    const textFor = (r) => {
+      if (!validateRule(r)) return '<strong>Invalid:</strong> passing must be 0–10 and cannot be higher than Excellent.';
+      return `Needs Improvement: 0–${Math.max(0,r.passing_min-1)} · Satisfactory: ${r.passing_min}–${Math.max(r.passing_min,r.excellent_min-1)} · Excellent: ${r.excellent_min}–10`;
+    };
+    $('airmanRulePreview').innerHTML = textFor(candidate.airman);
+    $('ncoRulePreview').innerHTML = textFor(candidate.nco_officer);
+  }
+
+  async function handleSaveGradingRules(e) {
+    e.preventDefault();
+    if (currentProfile?.role !== 'admin') return;
+    const candidate = readRulesFromAdminForm();
+    if (!validateRule(candidate.airman) || !validateRule(candidate.nco_officer)) {
+      return setMessage('gradingRulesMessage', 'Correct the grading thresholds before saving.', 'error');
+    }
+    try {
+      if (isDemo) {
+        saveLS(LS.gradingRules, candidate);
+      } else {
+        const rows = Object.entries(candidate).map(([grade_group, r]) => ({ grade_group, passing_min: r.passing_min, excellent_min: r.excellent_min, updated_by: currentProfile.id, updated_at: new Date().toISOString() }));
+        const { error } = await sb.from('grading_rules').upsert(rows, { onConflict: 'grade_group' });
+        if (error) throw error;
+      }
+      gradingRules = candidate;
+      updateLiveScore();
+      refreshAllBulkRows();
+      setMessage('gradingRulesMessage', 'Grading standards saved.', 'success');
+      toast('Grading standards updated');
+    } catch (err) {
+      setMessage('gradingRulesMessage', err.message || String(err), 'error');
+    }
+  }
+
+  function restoreDefaultGradingRules() {
+    gradingRules = cloneDefaultRules();
+    updateGradingRuleForm();
+    setMessage('gradingRulesMessage', 'Default values loaded. Click Save Grading Standards to apply them.', '');
+  }
+
+  async function autofillCadet() {
+    const capid = $('capid').value.trim();
+    if (!capid) return;
+    const cadets = await listCadets();
+    const cadet = cadets.find(c => c.capid === capid);
+    if (cadet) {
+      $('cadetName').value = cadet.name;
+      $('cadetGrade').value = cadet.grade;
+      updateLiveScore();
+      toast(`Loaded ${cadet.name}`);
+    }
+  }
+
+  async function saveInspectionFromForm(e) {
+    e.preventDefault();
+    setMessage('inspectionMessage', '', '');
+    const button = $('saveInspectionBtn');
+    const { scores, complete } = getScoresFromForm();
+    if (!complete) {
+      setMessage('inspectionMessage', 'Score all five inspection categories before saving.', 'error');
+      return;
+    }
+
+    const capid = $('capid').value.trim();
+    const name = $('cadetName').value.trim();
+    const grade = $('cadetGrade').value;
+    const date = $('inspectionDate').value;
+    if (!capid || !name || !grade || !date) return;
+
+    const group = gradeGroup(grade);
+    const total = Object.values(scores).reduce((a, b) => a + b, 0);
+    const result = calculateRating(group, total);
+    button.disabled = true;
+    button.textContent = 'Saving...';
+
+    try {
+      const cadet = await upsertCadet({ capid, name, grade });
+      await insertInspection({
+        cadet_id: cadet.id,
+        inspection_date: date,
+        grade_at_inspection: grade,
+        grade_group: group,
+        ...scores,
+        notes: $('notes').value.trim() || null,
+        evaluator_id: currentProfile.id,
+        total_score: total,
+        overall_rating: result.rating,
+        passed: result.passed
+      });
+      setMessage('inspectionMessage', `Saved: ${name} — ${total}/10, ${result.rating}, ${result.passed ? 'Passing' : 'Not Passing'}.`, 'success');
+      toast('Inspection saved');
+      clearInspectionForm();
+      await refreshCadetSelectors();
+    } catch (err) {
+      setMessage('inspectionMessage', err.message || String(err), 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Submit Inspection';
+    }
+  }
+
+  function clearInspectionForm() {
+    $('capid').value = '';
+    $('cadetName').value = '';
+    $('cadetGrade').value = '';
+    $('notes').value = '';
+    document.querySelectorAll('.inspection-rating').forEach(i => i.value = '');
+    $('inspectionDate').value = localDateISO();
+    updateLiveScore();
+  }
+
+  async function refreshCadetSelectors() {
+    const cadets = await listCadets();
+    const sel = $('historyCadetSelect');
+    const prior = sel.value;
+    sel.innerHTML = '<option value="">Select cadet...</option>' + cadets
+      .sort((a,b) => a.name.localeCompare(b.name))
+      .map(c => `<option value="${c.id}">${escapeHtml(c.name)} — ${escapeHtml(c.grade)} — ${escapeHtml(c.capid)}</option>`).join('');
+    if ([...sel.options].some(o => o.value === prior)) sel.value = prior;
+  }
+
+  async function renderSelectedCadetHistory() {
+    const cadetId = $('historyCadetSelect').value;
+    if (!cadetId) {
+      $('historyEmpty').classList.remove('hidden');
+      $('historyContent').classList.add('hidden');
+      return;
+    }
+    const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
+    const cadet = cadets.find(c => String(c.id) === String(cadetId));
+    const rows = inspections.filter(i => String(i.cadet_id) === String(cadetId)).sort((a,b) => a.inspection_date.localeCompare(b.inspection_date));
+
+    $('historyEmpty').classList.add('hidden');
+    $('historyContent').classList.remove('hidden');
+    const avg = rows.length ? average(rows.map(r => r.total_score)) : 0;
+    const passRate = rows.length ? Math.round(rows.filter(r => r.passed).length / rows.length * 100) : 0;
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    $('cadetStats').innerHTML = [
+      statCard('Cadet', cadet?.name || '', `${cadet?.grade || ''} · CAPID ${cadet?.capid || ''}`),
+      statCard('Inspections', rows.length, 'Recorded inspections'),
+      statCard('Average Score', avg.toFixed(1), 'Out of 10'),
+      statCard('Pass Rate', `${passRate}%`, latest ? `Latest: ${latest.total_score}/10 ${latest.overall_rating}` : 'No inspections')
+    ].join('');
+
+    $('historyTableBody').innerHTML = rows.slice().reverse().map(r => `
+      <tr>
+        <td>${formatDate(r.inspection_date)}</td><td>${escapeHtml(r.grade_at_inspection)}</td>
+        <td>${r.personal_appearance}</td><td>${r.garments}</td><td>${r.accoutrements}</td><td>${r.footwear}</td><td>${r.military_bearing}</td>
+        <td><strong>${r.total_score}/10</strong></td><td>${escapeHtml(r.overall_rating)}</td><td>${r.passed ? 'Pass' : 'Not Pass'}</td>
+      </tr>`).join('') || '<tr><td colspan="10">No inspections recorded.</td></tr>';
+
+    if (globalThis.Chart) {
+      if (chartCadet) chartCadet.destroy();
+      chartCadet = new Chart($('cadetTrendChart'), {
+        type: 'line',
+        data: { labels: rows.map(r => shortDate(r.inspection_date)), datasets: [{ label: 'Overall score', data: rows.map(r => r.total_score), tension: .25 }] },
+        options: { responsive: true, maintainAspectRatio: true, scales: { y: { min: 0, max: 10, ticks: { stepSize: 1 } } } }
+      });
+    }
+  }
+
+  async function renderDashboard() {
+    const inspections = await listInspections();
+    const cadets = await listCadets();
+    const total = inspections.length;
+    const avgScore = total ? average(inspections.map(i => i.total_score)) : 0;
+    const passRate = total ? Math.round(inspections.filter(i => i.passed).length / total * 100) : 0;
+    $('dashboardStats').innerHTML = [
+      statCard('Total Inspections', total, 'All recorded inspections'),
+      statCard('Cadets Inspected', new Set(inspections.map(i => i.cadet_id)).size, `${cadets.length} cadets in roster`),
+      statCard('Average Score', avgScore.toFixed(1), 'Out of 10'),
+      statCard('Pass Rate', `${passRate}%`, `${inspections.filter(i => i.passed).length} passing inspections`)
+    ].join('');
+
+    const categoryAverages = CRITERIA.map(c => total ? average(inspections.map(i => Number(i[c.key]))) : 0);
+    const weakestIndex = categoryAverages.indexOf(Math.min(...categoryAverages));
+    const ratings = {
+      'Needs Improvement': inspections.filter(i => i.overall_rating === 'Needs Improvement').length,
+      'Satisfactory': inspections.filter(i => i.overall_rating === 'Satisfactory').length,
+      'Excellent': inspections.filter(i => i.overall_rating === 'Excellent').length
+    };
+
+    const months = {};
+    inspections.forEach(i => {
+      const month = i.inspection_date.slice(0, 7);
+      (months[month] ||= []).push(i.total_score);
+    });
+    const monthKeys = Object.keys(months).sort();
+
+    if (globalThis.Chart) {
+      destroyChart(chartMonthly); destroyChart(chartCategory); destroyChart(chartRating);
+      chartMonthly = new Chart($('monthlyTrendChart'), {
+        type: 'line', data: { labels: monthKeys.map(formatMonth), datasets: [{ label: 'Average total', data: monthKeys.map(m => average(months[m])), tension: .25 }] },
+        options: { responsive: true, scales: { y: { min: 0, max: 10 } } }
+      });
+      chartCategory = new Chart($('categoryChart'), {
+        type: 'bar', data: { labels: CRITERIA.map(c => c.title), datasets: [{ label: 'Average (0–2)', data: categoryAverages }] },
+        options: { responsive: true, scales: { y: { min: 0, max: 2 } } }
+      });
+      chartRating = new Chart($('ratingChart'), {
+        type: 'doughnut', data: { labels: Object.keys(ratings), datasets: [{ data: Object.values(ratings) }] },
+        options: { responsive: true }
+      });
+    }
+
+    const last30 = new Date(); last30.setDate(last30.getDate() - 30);
+    const recent30 = inspections.filter(i => new Date(`${i.inspection_date}T12:00:00`) >= last30);
+    const prior = inspections.slice().sort((a,b) => a.inspection_date.localeCompare(b.inspection_date));
+    const firstHalf = prior.slice(0, Math.floor(prior.length / 2));
+    const secondHalf = prior.slice(Math.floor(prior.length / 2));
+    const trendDelta = firstHalf.length && secondHalf.length ? average(secondHalf.map(i => i.total_score)) - average(firstHalf.map(i => i.total_score)) : 0;
+
+    const insights = [];
+    if (!total) insights.push('No inspections have been recorded yet. Add inspections to build unit trends.');
+    else {
+      insights.push(`<strong>Most common improvement area:</strong> ${CRITERIA[weakestIndex].title} has the lowest average score at ${categoryAverages[weakestIndex].toFixed(2)}/2.`);
+      insights.push(`<strong>Current pass rate:</strong> ${passRate}% across ${total} inspections.`);
+      insights.push(`<strong>Recent activity:</strong> ${recent30.length} inspection${recent30.length === 1 ? '' : 's'} recorded in the last 30 days.`);
+      if (firstHalf.length && secondHalf.length) insights.push(`<strong>Long-term score trend:</strong> the newer half of inspections averages ${Math.abs(trendDelta).toFixed(1)} points ${trendDelta >= 0 ? 'higher' : 'lower'} than the older half.`);
+    }
+    $('programInsights').innerHTML = insights.map(i => `<div class="insight">${i}</div>`).join('');
+
+    $('recentTableBody').innerHTML = inspections.slice().sort((a,b) => b.inspection_date.localeCompare(a.inspection_date)).slice(0, 15).map(i => {
+      const c = i.cadets || cadets.find(x => String(x.id) === String(i.cadet_id)) || {};
+      return `<tr><td>${formatDate(i.inspection_date)}</td><td>${escapeHtml(c.capid || '')}</td><td>${escapeHtml(c.name || '')}</td><td>${escapeHtml(i.grade_at_inspection)}</td><td><strong>${i.total_score}/10</strong></td><td>${escapeHtml(i.overall_rating)}</td><td>${i.passed ? 'Pass' : 'Not Pass'}</td></tr>`;
+    }).join('') || '<tr><td colspan="7">No inspections recorded.</td></tr>';
+  }
+
+  async function refreshUsers() {
+    if (currentProfile?.role !== 'admin') return;
+    try {
+      const users = await listProfiles();
+      $('usersTableBody').innerHTML = users.map(u => `<tr><td>${escapeHtml(u.display_name || '')}</td><td>${escapeHtml(u.email || '')}</td><td>${escapeHtml(u.role)}</td><td>${formatDateTime(u.created_at)}</td></tr>`).join('');
+    } catch (err) {
+      $('usersTableBody').innerHTML = `<tr><td colspan="4">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  async function handleCreateUser(e) {
+    e.preventDefault();
+    if (currentProfile?.role !== 'admin') return;
+    const payload = {
+      display_name: $('newUserName').value.trim(),
+      email: $('newUserEmail').value.trim().toLowerCase(),
+      password: $('newUserPassword').value,
+      role: $('newUserRole').value
+    };
+    setMessage('userMessage', '', '');
+    try {
+      await createUser(payload);
+      setMessage('userMessage', `Created ${payload.email}.`, 'success');
+      $('createUserForm').reset();
+      await refreshUsers();
+    } catch (err) {
+      setMessage('userMessage', err.message || String(err), 'error');
+    }
+  }
+
+  async function exportSelectedCadetCSV() {
+    const cadetId = $('historyCadetSelect').value;
+    if (!cadetId) return toast('Select a cadet first');
+    const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
+    const cadet = cadets.find(c => String(c.id) === String(cadetId));
+    const rows = inspections.filter(i => String(i.cadet_id) === String(cadetId));
+    downloadCSV(rowsToCSV(rows, cadets), `CAP_uniform_${safeFilename(cadet?.name || 'cadet')}.csv`);
+  }
+
+  async function exportAllCSV() {
+    const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
+    downloadCSV(rowsToCSV(inspections, cadets), `CAP_uniform_inspections_${localDateISO()}.csv`);
+  }
+
+  function rowsToCSV(rows, cadets) {
+    const headers = ['Inspection Date','CAPID','Name','Grade','Personal Appearance','Garments','Accoutrements','Footwear','Military Bearing','Total Score','Overall Rating','Passed','Notes'];
+    const data = rows.map(i => {
+      const c = i.cadets || cadets.find(x => String(x.id) === String(i.cadet_id)) || {};
+      return [i.inspection_date,c.capid,c.name,i.grade_at_inspection,i.personal_appearance,i.garments,i.accoutrements,i.footwear,i.military_bearing,i.total_score,i.overall_rating,i.passed ? 'Yes' : 'No',i.notes || ''];
+    });
+    return [headers, ...data].map(row => row.map(csvCell).join(',')).join('\n');
+  }
+
+  function downloadCSV(content, filename) {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function listCadets() {
+    if (isDemo) return loadLS(LS.cadets, []);
+    const { data, error } = await sb.from('cadets').select('*').order('name');
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function upsertCadet(cadet) {
+    if (isDemo) {
+      const rows = loadLS(LS.cadets, []);
+      let existing = rows.find(r => r.capid === cadet.capid);
+      if (existing) {
+        existing.name = cadet.name; existing.grade = cadet.grade; existing.updated_at = new Date().toISOString();
+      } else {
+        existing = { id: nextNumericId(rows), ...cadet, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+        rows.push(existing);
+      }
+      saveLS(LS.cadets, rows);
+      return existing;
+    }
+    const { data, error } = await sb.from('cadets').upsert(cadet, { onConflict: 'capid' }).select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function insertInspection(row) {
+    if (isDemo) {
+      const rows = loadLS(LS.inspections, []);
+      rows.push({ id: nextNumericId(rows), ...row, created_at: new Date().toISOString() });
+      saveLS(LS.inspections, rows);
+      return;
+    }
+    const clean = { ...row };
+    delete clean.total_score; delete clean.overall_rating; delete clean.passed;
+    const { error } = await sb.from('inspections').insert(clean);
+    if (error) throw error;
+  }
+
+  async function listInspections() {
+    if (isDemo) {
+      const cadets = loadLS(LS.cadets, []);
+      return loadLS(LS.inspections, []).map(i => ({ ...i, cadets: cadets.find(c => String(c.id) === String(i.cadet_id)) || null }));
+    }
+    const { data, error } = await sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function listProfiles() {
+    if (isDemo) return loadLS(LS.users, []).map(stripPassword).sort((a,b) => (a.display_name || '').localeCompare(b.display_name || ''));
+    const { data, error } = await sb.from('profiles').select('*').order('display_name');
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function createUser(payload) {
+    if (isDemo) {
+      const users = loadLS(LS.users, []);
+      if (users.some(u => u.email.toLowerCase() === payload.email.toLowerCase())) throw new Error('That email already exists.');
+      users.push({ id: makeUUID(), email: payload.email, display_name: payload.display_name, role: payload.role, password_hash: await hashPassword(payload.password), created_at: new Date().toISOString() });
+      saveLS(LS.users, users);
+      return;
+    }
+    const { data, error } = await sb.functions.invoke('create-user', { body: payload });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+  }
+
+  async function ensureDemoAdmin() {
+    const users = loadLS(LS.users, []);
+    if (users.length) return;
+    users.push({
+      id: makeUUID(), email: 'admin@cap.local', display_name: 'CAP Administrator', role: 'admin',
+      password_hash: await hashPassword('CAPinspect2026!'), created_at: new Date().toISOString()
+    });
+    saveLS(LS.users, users);
+  }
+
+  function makeUUID() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    // Demo/local-file fallback. Supabase mode uses server-generated auth IDs.
+    return 'demo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  }
+
+  async function hashPassword(password) {
+    if (globalThis.crypto?.subtle) {
+      const bytes = new TextEncoder().encode(password);
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+      return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    // Only used as a compatibility fallback in browser-only demo mode.
+    let hash = 2166136261;
+    for (let i = 0; i < password.length; i++) {
+      hash ^= password.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `demo-${(hash >>> 0).toString(16)}`;
+  }
+
+  function loadLS(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) return JSON.parse(raw) ?? fallback;
+    } catch {}
+    return Object.prototype.hasOwnProperty.call(memoryStore, key) ? memoryStore[key] : fallback;
+  }
+  function saveLS(key, value) {
+    memoryStore[key] = value;
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }
+  function saveSession(id) {
+    memoryStore[LS.session] = id;
+    try { localStorage.setItem(LS.session, id); } catch {}
+  }
+  function loadSession() {
+    try { return localStorage.getItem(LS.session) || memoryStore[LS.session] || null; }
+    catch { return memoryStore[LS.session] || null; }
+  }
+  function removeSession() {
+    delete memoryStore[LS.session];
+    try { localStorage.removeItem(LS.session); } catch {}
+  }
+  function nextNumericId(rows) { return rows.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1; }
+  function stripPassword(user) { const { password_hash, ...safe } = user; return safe; }
+
+  function statCard(label, value, detail) {
+    return `<div class="stat-card"><div class="stat-label">${escapeHtml(String(label))}</div><div class="stat-value">${escapeHtml(String(value))}</div><div class="stat-detail">${escapeHtml(String(detail || ''))}</div></div>`;
+  }
+  function average(values) { return values.length ? values.reduce((a,b) => a + Number(b), 0) / values.length : 0; }
+  function formatDate(iso) { if (!iso) return ''; return new Date(`${iso}T12:00:00`).toLocaleDateString(); }
+  function shortDate(iso) { return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+  function formatMonth(yyyyMM) { return new Date(`${yyyyMM}-01T12:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); }
+  function formatDateTime(iso) { if (!iso) return ''; return new Date(iso).toLocaleString(); }
+  function destroyChart(chart) { if (chart) chart.destroy(); }
+  function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replaceAll('"','""')}"` : s; }
+  function safeFilename(s) { return String(s).replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, ''); }
+  function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+  function setMessage(id, text, type) { const el = $(id); el.textContent = text; el.className = `form-message ${type || ''}`.trim(); }
+  function toast(text) { const el = $('toast'); el.textContent = text; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2200); }
+})();
+  </script>
+</body>
+</html>
