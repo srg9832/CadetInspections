@@ -11,6 +11,10 @@
   let chartRating = null;
   let gradingRules = null;
   let bulkRowSerial = 0;
+  const offlineStore = window.CAPOfflineStore || null;
+  let syncInProgress = false;
+  let deferredInstallPrompt = null;
+  let offlineSession = false;
 
   const GRADES = [
     { value: 'C/AB', label: 'C/AB — Cadet Airman Basic', group: 'airman' },
@@ -63,7 +67,18 @@
     bindUI();
     $('inspectionDate').value = localDateISO();
     $('bulkInspectionDate').value = localDateISO();
-    $('modeBadge').textContent = isDemo ? 'Demo / browser-only storage' : 'Supabase shared database';
+    $('modeBadge').textContent = isDemo ? 'Demo / browser-only storage' : 'Supabase + offline tablet storage';
+
+    setupPWA();
+
+    if (offlineStore) {
+      try {
+        await offlineStore.init();
+        await requestPersistentStorage();
+      } catch (err) {
+        console.warn('Offline storage unavailable:', err);
+      }
+    }
 
     if (isDemo) {
       $('demoHint').classList.remove('hidden');
@@ -74,22 +89,38 @@
         $('loginMessage').className = 'form-message error';
         return;
       }
-      sb = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabasePublishableKey);
+      if (window.supabase?.createClient) {
+        sb = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabasePublishableKey, {
+          auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+        });
+      } else {
+        sb = null;
+        console.warn('Supabase library is not currently available. Offline cached mode can still be used.');
+      }
     }
 
-    gradingRules = isDemo ? loadDemoGradingRules() : cloneDefaultRules();
+    gradingRules = isDemo ? loadDemoGradingRules() : ((offlineStore && await offlineStore.getCachedGradingRules().catch(() => null)) || cloneDefaultRules());
     seedBulkRows(8);
     updateGradingRuleForm();
     updateLiveScore();
 
-    // Always require an explicit login when the page is opened. This is safer for
-    // shared squadron computers and keeps the initial workflow predictable.
+    window.addEventListener('online', handleConnectionRestored);
+    window.addEventListener('offline', updateSyncStatus);
+
+    // The login overlay still appears every time. If this tablet has previously
+    // authenticated, an offline continuation button is offered when no network exists.
     showLogin();
+    await updateOfflineLoginOption();
+    await updateSyncStatus();
   }
 
   function bindUI() {
     $('loginForm').addEventListener('submit', handleLogin);
+    $('offlineContinueBtn')?.addEventListener('click', handleOfflineContinue);
     $('logoutBtn').addEventListener('click', handleLogout);
+    $('syncNowBtn')?.addEventListener('click', () => syncPendingInspections({ showToast: true, refreshAfter: true }));
+    $('installPwaBtn')?.addEventListener('click', installPWA);
+    $('refreshOfflineBtn')?.addEventListener('click', refreshOfflineCacheFromServer);
     document.querySelectorAll('.main-tab').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
     document.querySelectorAll('.subtab').forEach(btn => btn.addEventListener('click', () => switchReport(btn.dataset.report)));
     $('cadetGrade').addEventListener('change', updateLiveScore);
@@ -237,22 +268,40 @@
         saveSession(user.id);
         profile = stripPassword(user);
       } else {
+        if (!navigator.onLine) throw new Error('No internet connection. Use Continue Offline if this tablet has been signed in before.');
+        if (!sb) throw new Error('The Supabase connection library is not loaded. Refresh this page while online, then try again.');
         const { data, error } = await sb.auth.signInWithPassword({ email, password });
         if (error) throw error;
         profile = await loadSupabaseProfile(data.user.id);
+        if (offlineStore) await offlineStore.cacheProfile(profile).catch(console.warn);
       }
-      await enterApp(profile);
+      offlineSession = false;
+      await enterApp(profile, { onlineLogin: !isDemo });
     } catch (err) {
       setMessage('loginMessage', err.message || String(err), 'error');
+      await updateOfflineLoginOption();
     }
+  }
+
+  async function handleOfflineContinue() {
+    if (isDemo || !offlineStore) return;
+    const profile = await offlineStore.getCachedProfile().catch(() => null);
+    if (!profile) return setMessage('loginMessage', 'This tablet does not have a previously authorized user cached yet. Connect to the internet and sign in once.', 'error');
+    offlineSession = true;
+    await enterApp(profile, { onlineLogin: false });
+    toast('Offline mode — inspections will queue on this tablet');
   }
 
   async function handleLogout() {
     if (isDemo) removeSession();
-    else await sb.auth.signOut();
+    else if (navigator.onLine) await sb.auth.signOut().catch(() => {});
     currentProfile = null;
+    offlineSession = false;
     showLogin();
+    await updateOfflineLoginOption();
+    await updateSyncStatus();
   }
+
 
   async function getCurrentProfile() {
     if (isDemo) {
@@ -272,9 +321,16 @@
     return data;
   }
 
-  async function enterApp(profile) {
+  async function enterApp(profile, { onlineLogin = false } = {}) {
     currentProfile = profile;
-    try { gradingRules = await loadGradingRules(); } catch (err) { console.warn('Could not load grading rules; using defaults.', err); gradingRules = cloneDefaultRules(); }
+    if (offlineStore && !isDemo) await offlineStore.cacheProfile(profile).catch(console.warn);
+
+    try {
+      gradingRules = await loadGradingRules();
+    } catch (err) {
+      console.warn('Could not load grading rules; using cached/default rules.', err);
+      gradingRules = (offlineStore && await offlineStore.getCachedGradingRules().catch(() => null)) || cloneDefaultRules();
+    }
     updateGradingRuleForm();
     updateLiveScore();
     refreshAllBulkRows();
@@ -282,13 +338,20 @@
     $('appView').classList.remove('app-locked');
     $('appView').setAttribute('aria-hidden', 'false');
     $('appView').inert = false;
-    $('signedInAs').textContent = `${profile.display_name || profile.email} · ${profile.role}`;
+    $('signedInAs').textContent = `${profile.display_name || profile.email} · ${profile.role}${offlineSession ? ' · Offline' : ''}`;
     $('usersTab').classList.toggle('admin-disabled', profile.role !== 'admin');
     $('usersTab').setAttribute('aria-disabled', profile.role !== 'admin' ? 'true' : 'false');
     $('usersTab').title = profile.role === 'admin' ? 'Administration' : 'Administrator access required';
     switchView('inspectionView');
+
+    if (!isDemo && navigator.onLine && onlineLogin) {
+      await syncPendingInspections({ showToast: false, refreshAfter: false });
+      await refreshOfflineCacheFromServer({ quiet: true });
+    }
+
     await refreshCadetSelectors();
-    if (profile.role === 'admin') await refreshUsers();
+    if (profile.role === 'admin' && navigator.onLine) await refreshUsers();
+    await updateSyncStatus();
     setTimeout(() => $('capid').focus(), 0);
   }
 
@@ -301,6 +364,7 @@
     $('loginPassword').value = '';
     setTimeout(() => $('loginEmail').focus(), 0);
   }
+
 
   function switchView(viewId) {
     if (viewId === 'usersView' && currentProfile?.role !== 'admin') {
@@ -454,13 +518,11 @@
 
     const button = $('bulkSubmitBtn');
     button.disabled = true;
-    button.textContent = `Saving ${ready.length}...`;
+    button.textContent = `Saving ${ready.length} to tablet...`;
     let saved = 0;
     try {
       for (const { row } of ready) {
-        const cadet = await upsertCadet({ capid: row.capid, name: row.name, grade: row.grade });
-        await insertInspection({
-          cadet_id: cadet.id,
+        await saveInspectionLocalFirst({ capid: row.capid, name: row.name, grade: row.grade }, {
           inspection_date: date,
           grade_at_inspection: row.grade,
           grade_group: row.group,
@@ -473,12 +535,20 @@
         });
         saved++;
       }
-      setMessage('bulkMessage', `Saved ${saved} inspection${saved === 1 ? '' : 's'}.`, 'success');
-      toast(`${saved} inspections saved`);
+
+      let syncResult = { synced: 0, failed: 0, pending: saved };
+      if (!isDemo && navigator.onLine) syncResult = await syncPendingInspections({ showToast: false, refreshAfter: true });
+      const queued = await getPendingCount();
+      const message = queued
+        ? `Saved ${saved} inspection${saved === 1 ? '' : 's'} on this tablet. ${queued} waiting to sync.`
+        : `Saved and synchronized ${saved} inspection${saved === 1 ? '' : 's'}.`;
+      setMessage('bulkMessage', message, 'success');
+      toast(queued ? `${saved} saved · ${queued} pending sync` : `${saved} inspections synced`);
       $('bulkTableBody').innerHTML = '';
       bulkRowSerial = 0;
       seedBulkRows(8);
       await refreshCadetSelectors();
+      await updateSyncStatus();
     } catch (err) {
       setMessage('bulkMessage', `Saved ${saved} before an error occurred: ${err.message || err}`, 'error');
     } finally {
@@ -495,11 +565,19 @@
 
   async function loadGradingRules() {
     if (isDemo) return loadDemoGradingRules();
-    const { data, error } = await sb.from('grading_rules').select('grade_group,passing_min,excellent_min');
-    if (error) throw error;
-    const rules = cloneDefaultRules();
-    (data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
-    return rules;
+    if (navigator.onLine) {
+      try {
+        const { data, error } = await sb.from('grading_rules').select('grade_group,passing_min,excellent_min');
+        if (error) throw error;
+        const rules = cloneDefaultRules();
+        (data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
+        if (offlineStore) await offlineStore.cacheGradingRules(rules).catch(console.warn);
+        return rules;
+      } catch (err) {
+        console.warn('Using cached grading rules because the server could not be reached.', err);
+      }
+    }
+    return (offlineStore && await offlineStore.getCachedGradingRules().catch(() => null)) || cloneDefaultRules();
   }
 
   function updateGradingRuleForm() {
@@ -541,6 +619,9 @@
     if (!validateRule(candidate.airman) || !validateRule(candidate.nco_officer)) {
       return setMessage('gradingRulesMessage', 'Correct the grading thresholds before saving.', 'error');
     }
+    if (!isDemo && !navigator.onLine) {
+      return setMessage('gradingRulesMessage', 'Changing grading standards requires an internet connection so every device receives the same rules.', 'error');
+    }
     try {
       if (isDemo) {
         saveLS(LS.gradingRules, candidate);
@@ -548,6 +629,7 @@
         const rows = Object.entries(candidate).map(([grade_group, r]) => ({ grade_group, passing_min: r.passing_min, excellent_min: r.excellent_min, updated_by: currentProfile.id, updated_at: new Date().toISOString() }));
         const { error } = await sb.from('grading_rules').upsert(rows, { onConflict: 'grade_group' });
         if (error) throw error;
+        if (offlineStore) await offlineStore.cacheGradingRules(candidate).catch(console.warn);
       }
       gradingRules = candidate;
       updateLiveScore();
@@ -598,12 +680,10 @@
     const total = Object.values(scores).reduce((a, b) => a + b, 0);
     const result = calculateRating(group, total);
     button.disabled = true;
-    button.textContent = 'Saving...';
+    button.textContent = 'Saving to tablet...';
 
     try {
-      const cadet = await upsertCadet({ capid, name, grade });
-      await insertInspection({
-        cadet_id: cadet.id,
+      await saveInspectionLocalFirst({ capid, name, grade }, {
         inspection_date: date,
         grade_at_inspection: grade,
         grade_group: group,
@@ -614,10 +694,15 @@
         overall_rating: result.rating,
         passed: result.passed
       });
-      setMessage('inspectionMessage', `Saved: ${name} — ${total}/10, ${result.rating}, ${result.passed ? 'Passing' : 'Not Passing'}.`, 'success');
-      toast('Inspection saved');
+
+      if (!isDemo && navigator.onLine) await syncPendingInspections({ showToast: false, refreshAfter: true });
+      const pending = await getPendingCount();
+      const syncText = pending ? ` Saved on this tablet; ${pending} inspection${pending === 1 ? '' : 's'} waiting to sync.` : ' Synchronized with Supabase.';
+      setMessage('inspectionMessage', `Saved: ${name} — ${total}/10, ${result.rating}, ${result.passed ? 'Passing' : 'Not Passing'}.${syncText}`, 'success');
+      toast(pending ? 'Inspection saved offline' : 'Inspection saved and synced');
       clearInspectionForm();
       await refreshCadetSelectors();
+      await updateSyncStatus();
     } catch (err) {
       setMessage('inspectionMessage', err.message || String(err), 'error');
     } finally {
@@ -815,9 +900,20 @@
 
   async function listCadets() {
     if (isDemo) return loadLS(LS.cadets, []);
-    const { data, error } = await sb.from('cadets').select('*').order('name');
-    if (error) throw error;
-    return data || [];
+    if (navigator.onLine) {
+      try {
+        const { data, error } = await sb.from('cadets').select('*').order('name');
+        if (error) throw error;
+        if (offlineStore) {
+          await offlineStore.cacheCadets(data || []);
+          return await offlineStore.getCadets();
+        }
+        return data || [];
+      } catch (err) {
+        console.warn('Cadet roster server read failed; using tablet cache.', err);
+      }
+    }
+    return offlineStore ? await offlineStore.getCadets() : [];
   }
 
   async function upsertCadet(cadet) {
@@ -833,6 +929,7 @@
       saveLS(LS.cadets, rows);
       return existing;
     }
+    if (offlineStore) return offlineStore.upsertLocalCadet(cadet);
     const { data, error } = await sb.from('cadets').upsert(cadet, { onConflict: 'capid' }).select().single();
     if (error) throw error;
     return data;
@@ -845,10 +942,7 @@
       saveLS(LS.inspections, rows);
       return;
     }
-    const clean = { ...row };
-    delete clean.total_score; delete clean.overall_rating; delete clean.passed;
-    const { error } = await sb.from('inspections').insert(clean);
-    if (error) throw error;
+    throw new Error('Direct inspection inserts are disabled in offline-first mode.');
   }
 
   async function listInspections() {
@@ -856,9 +950,20 @@
       const cadets = loadLS(LS.cadets, []);
       return loadLS(LS.inspections, []).map(i => ({ ...i, cadets: cadets.find(c => String(c.id) === String(i.cadet_id)) || null }));
     }
-    const { data, error } = await sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true });
-    if (error) throw error;
-    return data || [];
+    if (navigator.onLine) {
+      try {
+        const { data, error } = await sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true });
+        if (error) throw error;
+        if (offlineStore) {
+          await offlineStore.cacheServerInspections(data || []);
+          return await offlineStore.getInspections();
+        }
+        return data || [];
+      } catch (err) {
+        console.warn('Inspection history server read failed; using tablet cache.', err);
+      }
+    }
+    return offlineStore ? await offlineStore.getInspections() : [];
   }
 
   async function listProfiles() {
@@ -876,9 +981,238 @@
       saveLS(LS.users, users);
       return;
     }
+    if (!navigator.onLine) throw new Error('Creating users requires an internet connection.');
     const { data, error } = await sb.functions.invoke('create-user', { body: payload });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
+  }
+
+  async function saveInspectionLocalFirst(cadet, row) {
+    if (isDemo) {
+      const savedCadet = await upsertCadet(cadet);
+      await insertInspection({ ...row, cadet_id: savedCadet.id });
+      return { local_id: null, sync_status: 'synced' };
+    }
+    if (!offlineStore) throw new Error('Offline storage is not available in this browser.');
+    const clientUUID = makeUUID();
+    return offlineStore.queueInspection(cadet, {
+      ...row,
+      client_uuid: clientUUID,
+      local_id: clientUUID,
+      created_at: new Date().toISOString()
+    });
+  }
+
+  async function getPendingCount() {
+    if (isDemo || !offlineStore) return 0;
+    return offlineStore.pendingCount().catch(() => 0);
+  }
+
+  async function syncPendingInspections({ showToast = false, refreshAfter = true } = {}) {
+    if (isDemo || !offlineStore || !sb) return { synced: 0, failed: 0, pending: 0 };
+    if (syncInProgress) return { synced: 0, failed: 0, pending: await getPendingCount() };
+    if (!navigator.onLine) {
+      await updateSyncStatus();
+      if (showToast) toast('Offline — records remain safely stored on this tablet');
+      return { synced: 0, failed: 0, pending: await getPendingCount() };
+    }
+
+    const { data: sessionData } = await sb.auth.getSession();
+    if (!sessionData?.session?.user) {
+      await updateSyncStatus('signin');
+      if (showToast) toast('Sign in online before synchronizing');
+      return { synced: 0, failed: 0, pending: await getPendingCount() };
+    }
+
+    syncInProgress = true;
+    await updateSyncStatus('syncing');
+    let synced = 0;
+    let failed = 0;
+    try {
+      const pendingRows = await offlineStore.getPendingInspections();
+      for (const localRow of pendingRows) {
+        try {
+          const cadetPayload = { capid: localRow.capid, name: localRow.cadet_name, grade: localRow.cadet_grade };
+          const { data: cadet, error: cadetError } = await sb.from('cadets').upsert(cadetPayload, { onConflict: 'capid' }).select().single();
+          if (cadetError) throw cadetError;
+
+          const payload = {
+            client_uuid: localRow.client_uuid,
+            cadet_id: cadet.id,
+            inspection_date: localRow.inspection_date,
+            grade_at_inspection: localRow.grade_at_inspection,
+            grade_group: localRow.grade_group,
+            personal_appearance: Number(localRow.personal_appearance),
+            garments: Number(localRow.garments),
+            accoutrements: Number(localRow.accoutrements),
+            footwear: Number(localRow.footwear),
+            military_bearing: Number(localRow.military_bearing),
+            notes: localRow.notes || null,
+            evaluator_id: localRow.evaluator_id
+          };
+
+          const { data: serverRow, error: inspectionError } = await sb.from('inspections')
+            .upsert(payload, { onConflict: 'client_uuid' })
+            .select('*, cadets(capid,name,grade)')
+            .single();
+          if (inspectionError) throw inspectionError;
+
+          await offlineStore.markInspectionSynced(localRow.local_id, serverRow, cadet);
+          synced++;
+        } catch (err) {
+          failed++;
+          await offlineStore.markInspectionError(localRow.local_id, err.message || String(err)).catch(() => {});
+          console.warn('Inspection sync failed:', err);
+          if (/jwt|auth|session|401|403/i.test(String(err.message || err))) break;
+        }
+      }
+
+      if (!failed) await offlineStore.noteSyncSuccess();
+      else await offlineStore.noteSyncError(`${failed} inspection${failed === 1 ? '' : 's'} could not synchronize.`);
+
+      if (refreshAfter && navigator.onLine) await refreshOfflineCacheFromServer({ quiet: true });
+      const pending = await getPendingCount();
+      if (showToast) toast(pending ? `${synced} synced · ${pending} still pending` : 'All inspections synchronized');
+      return { synced, failed, pending };
+    } finally {
+      syncInProgress = false;
+      await updateSyncStatus();
+    }
+  }
+
+  async function refreshOfflineCacheFromServer({ quiet = false } = {}) {
+    if (isDemo || !offlineStore || !sb) return;
+    if (!navigator.onLine) {
+      if (!quiet) toast('Offline — cannot refresh server data');
+      return;
+    }
+    try {
+      const [cadetsResult, inspectionsResult, rulesResult] = await Promise.all([
+        sb.from('cadets').select('*').order('name'),
+        sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true }),
+        sb.from('grading_rules').select('grade_group,passing_min,excellent_min')
+      ]);
+      if (cadetsResult.error) throw cadetsResult.error;
+      if (inspectionsResult.error) throw inspectionsResult.error;
+      if (rulesResult.error) throw rulesResult.error;
+      await offlineStore.cacheCadets(cadetsResult.data || []);
+      await offlineStore.cacheServerInspections(inspectionsResult.data || []);
+      const rules = cloneDefaultRules();
+      (rulesResult.data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
+      gradingRules = rules;
+      await offlineStore.cacheGradingRules(rules);
+      await offlineStore.markServerRefresh();
+      updateGradingRuleForm();
+      updateLiveScore();
+      refreshAllBulkRows();
+      if (currentProfile) await refreshCadetSelectors();
+      if (!quiet) toast('Offline tablet data refreshed');
+    } catch (err) {
+      console.warn('Offline cache refresh failed:', err);
+      if (!quiet) toast(`Refresh failed: ${err.message || err}`);
+    } finally {
+      await updateSyncStatus();
+    }
+  }
+
+  async function updateSyncStatus(forcedState = '') {
+    const chip = $('syncStatus');
+    const button = $('syncNowBtn');
+    if (!chip) return;
+    if (isDemo) {
+      chip.textContent = 'Demo storage';
+      chip.className = 'sync-chip demo';
+      if (button) button.classList.add('hidden');
+      return;
+    }
+    const pending = await getPendingCount();
+    const online = navigator.onLine;
+    if (button) {
+      button.classList.remove('hidden');
+      button.disabled = syncInProgress || !online || !currentProfile;
+      button.textContent = syncInProgress ? 'Syncing…' : 'Sync Now';
+    }
+    if (forcedState === 'syncing' || syncInProgress) {
+      chip.textContent = `Syncing${pending ? ` · ${pending} queued` : ''}`;
+      chip.className = 'sync-chip syncing';
+    } else if (forcedState === 'signin') {
+      chip.textContent = `${pending} pending · sign in to sync`;
+      chip.className = 'sync-chip warning';
+    } else if (!online) {
+      chip.textContent = pending ? `Offline · ${pending} pending` : 'Offline · ready';
+      chip.className = 'sync-chip offline';
+    } else if (pending) {
+      chip.textContent = `Online · ${pending} pending`;
+      chip.className = 'sync-chip warning';
+    } else {
+      chip.textContent = 'Online · synced';
+      chip.className = 'sync-chip online';
+    }
+
+    const info = offlineStore ? await offlineStore.getSyncInfo().catch(() => null) : null;
+    if ($('offlineStatusDetail') && info) {
+      $('offlineStatusDetail').textContent = `${pending} pending inspection${pending === 1 ? '' : 's'} · Last sync: ${info.last_sync ? formatDateTime(info.last_sync) : 'not yet'} · Cached data refresh: ${info.last_server_refresh ? formatDateTime(info.last_server_refresh) : 'not yet'}`;
+    }
+  }
+
+  async function handleConnectionRestored() {
+    if (!isDemo && !sb) {
+      location.reload();
+      return;
+    }
+    await updateSyncStatus();
+    if (currentProfile) {
+      const result = await syncPendingInspections({ showToast: true, refreshAfter: true });
+      if (!result.pending) offlineSession = false;
+    }
+    await updateOfflineLoginOption();
+  }
+
+  async function updateOfflineLoginOption() {
+    const btn = $('offlineContinueBtn');
+    const hint = $('offlineLoginHint');
+    if (!btn || isDemo || !offlineStore) return;
+    const profile = await offlineStore.getCachedProfile().catch(() => null);
+    if (profile) {
+      btn.classList.toggle('hidden', navigator.onLine);
+      btn.textContent = `Continue Offline as ${profile.display_name || profile.email}`;
+      if (hint) {
+        hint.classList.toggle('hidden', navigator.onLine);
+        hint.textContent = 'This tablet was previously authorized. Offline inspections will stay on this device until a connection returns.';
+      }
+    } else {
+      btn.classList.add('hidden');
+      hint?.classList.add('hidden');
+    }
+  }
+
+  function setupPWA() {
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(err => console.warn('Service worker registration failed:', err)));
+    }
+    window.addEventListener('beforeinstallprompt', event => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      $('installPwaBtn')?.classList.remove('hidden');
+    });
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      $('installPwaBtn')?.classList.add('hidden');
+      toast('CAP Inspection app installed');
+    });
+  }
+
+  async function installPWA() {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice.catch(() => null);
+    deferredInstallPrompt = null;
+    $('installPwaBtn')?.classList.add('hidden');
+  }
+
+  async function requestPersistentStorage() {
+    if (!navigator.storage?.persist) return;
+    try { await navigator.storage.persist(); } catch {}
   }
 
   async function ensureDemoAdmin() {
