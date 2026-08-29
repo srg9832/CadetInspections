@@ -2,7 +2,7 @@
   'use strict';
 
   const DB_NAME = 'cap_uniform_inspection_pwa';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   let dbPromise = null;
 
   function requestPromise(request) {
@@ -27,17 +27,33 @@
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
+        const tx = req.transaction;
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+
+        let cadets;
         if (!db.objectStoreNames.contains('cadets')) {
-          const store = db.createObjectStore('cadets', { keyPath: 'capid' });
-          store.createIndex('name', 'name', { unique: false });
+          cadets = db.createObjectStore('cadets', { keyPath: 'capid' });
+        } else {
+          cadets = tx.objectStore('cadets');
         }
+        if (!cadets.indexNames.contains('name')) cadets.createIndex('name', 'name', { unique: false });
+        if (!cadets.indexNames.contains('last_name')) cadets.createIndex('last_name', 'last_name', { unique: false });
+        if (!cadets.indexNames.contains('current_unit_id')) cadets.createIndex('current_unit_id', 'current_unit_id', { unique: false });
+
+        let inspections;
         if (!db.objectStoreNames.contains('inspections')) {
-          const store = db.createObjectStore('inspections', { keyPath: 'local_id' });
-          store.createIndex('sync_status', 'sync_status', { unique: false });
-          store.createIndex('inspection_date', 'inspection_date', { unique: false });
-          store.createIndex('capid', 'capid', { unique: false });
+          inspections = db.createObjectStore('inspections', { keyPath: 'local_id' });
+        } else {
+          inspections = tx.objectStore('inspections');
         }
+        if (!inspections.indexNames.contains('sync_status')) inspections.createIndex('sync_status', 'sync_status', { unique: false });
+        if (!inspections.indexNames.contains('inspection_date')) inspections.createIndex('inspection_date', 'inspection_date', { unique: false });
+        if (!inspections.indexNames.contains('capid')) inspections.createIndex('capid', 'capid', { unique: false });
+        if (!inspections.indexNames.contains('unit_id')) inspections.createIndex('unit_id', 'unit_id', { unique: false });
+        if (!inspections.indexNames.contains('evaluator_id')) inspections.createIndex('evaluator_id', 'evaluator_id', { unique: false });
+
+        if (!db.objectStoreNames.contains('units')) db.createObjectStore('units', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('profiles')) db.createObjectStore('profiles', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error || new Error('Could not open the local inspection database.'));
@@ -81,24 +97,40 @@
     await transactionPromise(tx);
   }
 
+  function fullName(cadet = {}) {
+    const structured = `${cadet.first_name || ''} ${cadet.last_name || ''}`.trim();
+    return structured || cadet.name || '';
+  }
+
   function normalizeServerInspection(row) {
     const cadet = row.cadets || {};
+    const unit = row.units || null;
+    const displayName = fullName(cadet) || row.cadet_name || '';
     return {
       ...row,
       local_id: row.client_uuid || `server:${row.id}`,
       server_id: row.id,
       client_uuid: row.client_uuid || null,
       capid: cadet.capid || row.capid || '',
-      cadet_name: cadet.name || row.cadet_name || '',
+      cadet_first_name: cadet.first_name || row.cadet_first_name || '',
+      cadet_last_name: cadet.last_name || row.cadet_last_name || '',
+      cadet_name: displayName,
       cadet_grade: cadet.grade || row.cadet_grade || row.grade_at_inspection || '',
+      unit_id: row.unit_id ?? unit?.id ?? null,
+      unit_charter_number: unit?.charter_number || row.unit_charter_number || '',
+      unit_name: unit?.name || row.unit_name || '',
       sync_status: 'synced',
       sync_error: null,
       synced_at: new Date().toISOString(),
       cadets: {
         capid: cadet.capid || row.capid || '',
-        name: cadet.name || row.cadet_name || '',
-        grade: cadet.grade || row.cadet_grade || row.grade_at_inspection || ''
-      }
+        first_name: cadet.first_name || row.cadet_first_name || '',
+        last_name: cadet.last_name || row.cadet_last_name || '',
+        name: displayName,
+        grade: cadet.grade || row.cadet_grade || row.grade_at_inspection || '',
+        current_unit_id: cadet.current_unit_id ?? null
+      },
+      units: unit ? { id: unit.id, charter_number: unit.charter_number, name: unit.name, active: unit.active } : null
     };
   }
 
@@ -134,10 +166,33 @@
     return getMeta('grading_rules', null);
   }
 
+  async function cacheUnits(rows) {
+    if (!rows) return;
+    await clear('units');
+    await putMany('units', rows);
+  }
+
+  async function getUnits() {
+    const rows = await getAll('units');
+    return rows.sort((a, b) => String(a.charter_number || '').localeCompare(String(b.charter_number || '')) || String(a.name || '').localeCompare(String(b.name || '')));
+  }
+
+  async function cacheInspectorDirectory(rows) {
+    if (!rows) return;
+    await clear('profiles');
+    await putMany('profiles', rows);
+  }
+
+  async function getInspectorDirectory() {
+    const rows = await getAll('profiles');
+    return rows.sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || '')));
+  }
+
   async function cacheCadets(rows) {
     if (!rows?.length) return;
     await putMany('cadets', rows.map(c => ({
       ...c,
+      name: fullName(c),
       id: c.id ?? `local:${c.capid}`,
       sync_status: c.sync_status || 'synced'
     })));
@@ -145,7 +200,11 @@
 
   async function getCadets() {
     const rows = await getAll('cadets');
-    return rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    return rows.sort((a, b) => {
+      const an = `${a.last_name || ''}, ${a.first_name || ''}`.trim();
+      const bn = `${b.last_name || ''}, ${b.first_name || ''}`.trim();
+      return (an || a.name || '').localeCompare(bn || b.name || '');
+    });
   }
 
   async function upsertLocalCadet(cadet) {
@@ -153,6 +212,7 @@
     const row = {
       ...(existing || {}),
       ...cadet,
+      name: fullName(cadet) || existing?.name || '',
       id: existing?.id ?? `local:${cadet.capid}`,
       updated_at: new Date().toISOString(),
       sync_status: existing?.sync_status === 'synced' ? 'synced' : 'pending'
@@ -178,9 +238,19 @@
       server_id: null,
       cadet_id: localCadet.id,
       capid: cadet.capid,
-      cadet_name: cadet.name,
+      cadet_first_name: cadet.first_name || '',
+      cadet_last_name: cadet.last_name || '',
+      cadet_name: fullName(cadet),
       cadet_grade: cadet.grade,
-      cadets: { capid: cadet.capid, name: cadet.name, grade: cadet.grade },
+      unit_id: inspection.unit_id ?? cadet.current_unit_id ?? null,
+      cadets: {
+        capid: cadet.capid,
+        first_name: cadet.first_name || '',
+        last_name: cadet.last_name || '',
+        name: fullName(cadet),
+        grade: cadet.grade,
+        current_unit_id: cadet.current_unit_id ?? null
+      },
       sync_status: 'pending',
       sync_error: null,
       created_at: inspection.created_at || new Date().toISOString(),
@@ -214,7 +284,14 @@
     const normalized = normalizeServerInspection({
       ...serverRow,
       client_uuid: serverRow.client_uuid || localId,
-      cadets: serverRow.cadets || (serverCadet ? { capid: serverCadet.capid, name: serverCadet.name, grade: serverCadet.grade } : undefined)
+      cadets: serverRow.cadets || (serverCadet ? {
+        capid: serverCadet.capid,
+        first_name: serverCadet.first_name,
+        last_name: serverCadet.last_name,
+        name: fullName(serverCadet),
+        grade: serverCadet.grade,
+        current_unit_id: serverCadet.current_unit_id
+      } : undefined)
     });
     normalized.local_id = localId;
     await put('inspections', normalized);
@@ -264,6 +341,8 @@
     const profile = keepProfile ? await getCachedProfile() : null;
     await clear('cadets');
     await clear('inspections');
+    await clear('units');
+    await clear('profiles');
     await clear('meta');
     if (profile) await cacheProfile(profile);
   }
@@ -276,6 +355,10 @@
     getCachedProfile,
     cacheGradingRules,
     getCachedGradingRules,
+    cacheUnits,
+    getUnits,
+    cacheInspectorDirectory,
+    getInspectorDirectory,
     cacheCadets,
     getCadets,
     upsertLocalCadet,

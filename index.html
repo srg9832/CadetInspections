@@ -358,7 +358,51 @@ tbody tr:hover { background: #fafcfd; }
 }
 
 .toast:empty { display: none; }
-  </style>
+  
+/* ---------- Multi-unit / report filters ---------- */
+.entry-grid.multiunit-entry-grid { grid-template-columns: repeat(12, 1fr); }
+.entry-grid.multiunit-entry-grid .field-unit { grid-column: span 4; }
+.entry-grid.multiunit-entry-grid .field-date { grid-column: span 3; }
+.entry-grid.multiunit-entry-grid .field-capid { grid-column: span 2; }
+.entry-grid.multiunit-entry-grid .field-first { grid-column: span 4; }
+.entry-grid.multiunit-entry-grid .field-last { grid-column: span 4; }
+.entry-grid.multiunit-entry-grid .field-grade { grid-column: span 4; }
+.bulk-context-fields { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(180px, 260px); gap: 14px; flex: 1; }
+.report-filter-bar { display: grid; grid-template-columns: minmax(210px, 1.2fr) minmax(210px, 1.4fr) minmax(180px, .9fr) auto auto; gap: 12px; align-items: end; margin-bottom: 14px; }
+.report-filter-bar .custom-date-fields { display: contents; }
+.report-filter-actions { display: flex; gap: 8px; align-items: end; }
+.filter-summary { margin: -4px 0 14px; color: var(--muted); font-size: .82rem; }
+.inspector-explainer { margin-bottom: 14px; }
+.inspector-explainer p { margin: 6px 0 0; color: var(--muted); line-height: 1.5; }
+.stat-grid.five { grid-template-columns: repeat(5, 1fr); }
+.metric-positive { color: #166534; font-weight: 800; }
+.metric-negative { color: #991b1b; font-weight: 800; }
+.metric-neutral { color: var(--navy-900); font-weight: 800; }
+.confidence-note { color: var(--muted); font-size: .76rem; }
+.unit-admin-grid { display: grid; grid-template-columns: minmax(320px, .8fr) minmax(520px, 1.5fr); gap: 16px; }
+.unit-form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.checkbox-field { display: flex; gap: 9px; align-items: center; font-weight: 700; }
+.checkbox-field input { width: auto; min-height: auto; }
+.legacy-assignment { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+.legacy-assignment-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.unit-status-active { color: var(--success); font-weight: 800; }
+.unit-status-inactive { color: var(--muted); font-weight: 800; }
+.small-action { padding: 6px 9px; font-size: .78rem; }
+@media (max-width: 980px) {
+  .entry-grid.multiunit-entry-grid { grid-template-columns: repeat(2, 1fr); }
+  .entry-grid.multiunit-entry-grid > .field { grid-column: auto; }
+  .report-filter-bar { grid-template-columns: 1fr 1fr; }
+  .report-filter-actions { grid-column: 1 / -1; }
+  .unit-admin-grid { grid-template-columns: 1fr; }
+  .stat-grid.five { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 650px) {
+  .entry-grid.multiunit-entry-grid, .bulk-context-fields, .report-filter-bar { grid-template-columns: 1fr; }
+  .report-filter-actions { grid-column: auto; }
+  .stat-grid.five { grid-template-columns: 1fr; }
+}
+
+</style>
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -430,20 +474,30 @@ tbody tr:hover { background: #fafcfd; }
               <span class="required-note">* Required</span>
             </div>
 
-            <div class="entry-grid">
-              <label class="field">
+            <div class="entry-grid multiunit-entry-grid">
+              <label class="field field-unit">
+                <span>Unit *</span>
+                <select id="inspectionUnit" required><option value="">Select unit...</option></select>
+              </label>
+
+              <label class="field field-date">
                 <span>Inspection Date *</span>
                 <input id="inspectionDate" type="date" required />
               </label>
 
-              <label class="field">
+              <label class="field field-capid">
                 <span>CAPID *</span>
                 <input id="capid" inputmode="numeric" maxlength="12" required placeholder="123456" />
               </label>
 
-              <label class="field field-wide">
-                <span>Cadet Name *</span>
-                <input id="cadetName" required placeholder="First Last" />
+              <label class="field field-last">
+                <span>Last Name *</span>
+                <input id="cadetLastName" required placeholder="Smith" />
+              </label>
+
+              <label class="field field-first">
+                <span>First Name *</span>
+                <input id="cadetFirstName" required placeholder="John" />
               </label>
 
               <label class="field field-grade">
@@ -619,10 +673,16 @@ tbody tr:hover { background: #fafcfd; }
 
         <section class="app-panel bulk-toolbar-panel">
           <div class="bulk-toolbar">
-            <label class="field bulk-date-field">
-              <span>Inspection Date *</span>
-              <input id="bulkInspectionDate" type="date" required />
-            </label>
+            <div class="bulk-context-fields">
+              <label class="field">
+                <span>Unit for this inspection group *</span>
+                <select id="bulkUnit" required><option value="">Select unit...</option></select>
+              </label>
+              <label class="field bulk-date-field">
+                <span>Inspection Date *</span>
+                <input id="bulkInspectionDate" type="date" required />
+              </label>
+            </div>
             <div class="bulk-actions">
               <button id="bulkAddRowBtn" class="secondary" type="button">Add Row</button>
               <button id="bulkAdd10Btn" class="secondary" type="button">Add 10 Rows</button>
@@ -639,7 +699,8 @@ tbody tr:hover { background: #fafcfd; }
               <thead>
                 <tr>
                   <th>CAPID</th>
-                  <th>Name</th>
+                  <th>Last Name</th>
+                  <th>First Name</th>
                   <th>Cadet Grade</th>
                   <th title="Personal Appearance">Personal Appearance</th>
                   <th>Garments</th>
@@ -669,49 +730,50 @@ tbody tr:hover { background: #fafcfd; }
           <div>
             <div class="page-kicker">REPORTS</div>
             <h1>Inspection Reports</h1>
-            <p>Review individual cadet history and unit-wide inspection performance.</p>
+            <p>Analyze cadets, units, trends, and inspector scoring patterns.</p>
           </div>
           <div class="subtabs" role="tablist" aria-label="Report type">
             <button class="subtab active" data-report="historyView" type="button">Individual Cadet</button>
             <button class="subtab" data-report="dashboardView" type="button">Unit Overview</button>
+            <button class="subtab" data-report="inspectorView" type="button">Inspector Analysis</button>
           </div>
         </div>
 
         <section id="historyView" class="report-panel active-report-panel">
-          <div class="app-panel report-toolbar">
-            <label class="field grow">
-              <span>Select Cadet</span>
-              <select id="historyCadetSelect"><option value="">Select cadet...</option></select>
-            </label>
-            <button id="printCadetBtn" class="secondary" type="button">Print Report</button>
-            <button id="exportCadetBtn" class="secondary" type="button">Export CSV</button>
+          <div class="app-panel report-filter-bar">
+            <label class="field"><span>Unit</span><select id="historyUnitFilter"><option value="all">All Units</option></select></label>
+            <label class="field"><span>Select Cadet</span><select id="historyCadetSelect"><option value="">Select cadet...</option></select></label>
+            <label class="field"><span>Date Range</span><select id="historyDateRange" class="date-range-select">
+                <option value="1m">Last Month</option><option value="3m">Last 3 Months</option><option value="6m">Last 6 Months</option><option value="12m" selected>Last 12 Months</option><option value="ytd">Year to Date</option><option value="previous_year">Previous Calendar Year</option><option value="all">All Time</option><option value="custom">Custom Range</option>
+              </select></label>
+            <label class="field custom-history-date hidden"><span>From</span><input id="historyStartDate" type="date"></label>
+            <label class="field custom-history-date hidden"><span>To</span><input id="historyEndDate" type="date"></label>
+            <div class="report-filter-actions"><button id="printCadetBtn" class="secondary" type="button">Print</button><button id="exportCadetBtn" class="secondary" type="button">Export CSV</button></div>
           </div>
-
+          <div id="historyFilterSummary" class="filter-summary"></div>
           <div id="historyEmpty" class="empty-state">Select a cadet to view inspection history.</div>
           <div id="historyContent" class="hidden">
             <div class="stat-grid four" id="cadetStats"></div>
-            <div class="app-panel chart-card">
-              <h2>Score Trend</h2>
-              <canvas id="cadetTrendChart" height="110"></canvas>
-            </div>
+            <div class="app-panel chart-card"><h2>Score Trend</h2><canvas id="cadetTrendChart" height="110"></canvas></div>
             <div class="app-panel report-table-card">
               <h2>Inspection History</h2>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date</th><th>Cadet Grade</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Total</th><th>Inspection Rating</th><th>Result</th>
-                    </tr>
-                  </thead>
-                  <tbody id="historyTableBody"></tbody>
-                </table>
-              </div>
+              <div class="table-wrap"><table>
+                <thead><tr><th>Date</th><th>Unit</th><th>Cadet Grade</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Total</th><th>Inspection Rating</th><th>Result</th></tr></thead>
+                <tbody id="historyTableBody"></tbody>
+              </table></div>
             </div>
           </div>
         </section>
 
         <section id="dashboardView" class="report-panel">
-          <div class="report-actions"><button id="exportAllBtn" class="secondary" type="button">Export All CSV</button></div>
+          <div class="app-panel report-filter-bar">
+            <label class="field"><span>Unit</span><select id="dashboardUnitFilter"><option value="all">All Units</option></select></label>
+            <label class="field"><span>Date Range</span><select id="dashboardDateRange" class="date-range-select"><option value="1m">Last Month</option><option value="3m">Last 3 Months</option><option value="6m" selected>Last 6 Months</option><option value="12m">Last 12 Months</option><option value="ytd">Year to Date</option><option value="previous_year">Previous Calendar Year</option><option value="all">All Time</option><option value="custom">Custom Range</option></select></label>
+            <label class="field custom-dashboard-date hidden"><span>From</span><input id="dashboardStartDate" type="date"></label>
+            <label class="field custom-dashboard-date hidden"><span>To</span><input id="dashboardEndDate" type="date"></label>
+            <div class="report-filter-actions"><button id="exportAllBtn" class="secondary" type="button">Export Filtered CSV</button></div>
+          </div>
+          <div id="dashboardFilterSummary" class="filter-summary"></div>
           <div id="dashboardStats" class="stat-grid four"></div>
           <div class="dashboard-grid">
             <div class="app-panel chart-card"><h2>Average Score Over Time</h2><canvas id="monthlyTrendChart" height="130"></canvas></div>
@@ -719,14 +781,39 @@ tbody tr:hover { background: #fafcfd; }
             <div class="app-panel chart-card"><h2>Overall Inspection Ratings</h2><canvas id="ratingChart" height="130"></canvas></div>
             <div class="app-panel"><h2>Program Notes</h2><div id="programInsights" class="insight-list"></div></div>
           </div>
-          <div class="app-panel">
-            <h2>Recent Inspections</h2>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Date</th><th>CAPID</th><th>Name</th><th>Cadet Grade</th><th>Score</th><th>Inspection Rating</th><th>Result</th></tr></thead>
-                <tbody id="recentTableBody"></tbody>
-              </table>
-            </div>
+          <div class="app-panel"><h2>Recent Inspections</h2><div class="table-wrap"><table>
+            <thead><tr><th>Date</th><th>Unit</th><th>CAPID</th><th>Name</th><th>Cadet Grade</th><th>Score</th><th>Inspection Rating</th><th>Result</th></tr></thead>
+            <tbody id="recentTableBody"></tbody>
+          </table></div></div>
+        </section>
+
+        <section id="inspectorView" class="report-panel">
+          <div class="app-panel report-filter-bar">
+            <label class="field"><span>Unit</span><select id="inspectorUnitFilter"><option value="all">All Units</option></select></label>
+            <label class="field"><span>Date Range</span><select id="inspectorDateRange" class="date-range-select"><option value="1m">Last Month</option><option value="3m">Last 3 Months</option><option value="6m">Last 6 Months</option><option value="12m" selected>Last 12 Months</option><option value="ytd">Year to Date</option><option value="previous_year">Previous Calendar Year</option><option value="all">All Time</option><option value="custom">Custom Range</option></select></label>
+            <label class="field custom-inspector-date hidden"><span>From</span><input id="inspectorStartDate" type="date"></label>
+            <label class="field custom-inspector-date hidden"><span>To</span><input id="inspectorEndDate" type="date"></label>
+            <div class="report-filter-actions"><button id="exportInspectorBtn" class="secondary" type="button">Export Analysis CSV</button></div>
+          </div>
+          <div id="inspectorFilterSummary" class="filter-summary"></div>
+          <div class="app-panel inspector-explainer">
+            <h2>Rater Severity / Leniency Analysis</h2>
+            <p>The adjusted deviation compares each inspection with the same cadet's scores from other inspectors when available; otherwise it uses the matching cadet-grade-group average. Negative values indicate stricter/lower scoring and positive values indicate more lenient/higher scoring. This is a quality-control indicator, not proof of inspector bias.</p>
+          </div>
+          <div id="inspectorStats" class="stat-grid four"></div>
+          <div class="app-panel report-table-card">
+            <h2>Inspector Comparison</h2>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Inspector</th><th>Inspections</th><th>Average</th><th>Raw Difference</th><th>Adjusted Difference</th><th>Std. Deviation Effect</th><th>95% CI</th><th>Assessment</th></tr></thead>
+              <tbody id="inspectorTableBody"></tbody>
+            </table></div>
+          </div>
+          <div class="app-panel report-table-card">
+            <h2>Adjusted Difference by Inspection Area</h2>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Inspector</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th></tr></thead>
+              <tbody id="inspectorCategoryBody"></tbody>
+            </table></div>
           </div>
         </section>
       </section>
@@ -739,7 +826,7 @@ tbody tr:hover { background: #fafcfd; }
           <div>
             <div class="page-kicker">ADMINISTRATION</div>
             <h1>Administration</h1>
-            <p>Manage authorized application users. Administrator access is required.</p>
+            <p>Manage units, grading standards, users, and offline application data. Administrator access is required.</p>
           </div>
         </div>
 
@@ -752,6 +839,33 @@ tbody tr:hover { background: #fafcfd; }
                 <p>Inspections are saved on this device first, then synchronized with Supabase when an internet connection is available.</p>
               </div>
               <button id="refreshOfflineBtn" class="secondary" type="button">Refresh Offline Cache</button>
+            </div>
+          </section>
+
+          <section class="unit-admin-grid">
+            <form id="unitForm" class="app-panel stack">
+              <div class="panel-heading"><div><h2>Unit Management</h2><p>Add and maintain CAP units used by entry screens and reports.</p></div></div>
+              <input id="editUnitId" type="hidden" />
+              <label class="field"><span>Charter Number *</span><input id="unitCharterNumber" required placeholder="MT-007" /></label>
+              <label class="field"><span>Unit Name *</span><input id="unitName" required placeholder="Great Falls Composite Squadron" /></label>
+              <label class="checkbox-field"><input id="unitActive" type="checkbox" checked /> Active unit</label>
+              <div class="unit-form-actions"><button class="primary" type="submit">Save Unit</button><button id="cancelUnitEditBtn" class="secondary hidden" type="button">Cancel Edit</button></div>
+              <p id="unitMessage" class="form-message"></p>
+              <div class="legacy-assignment">
+                <h3>Existing records from before multi-unit support</h3>
+                <p id="legacyRecordCount" class="filter-summary">Checking unassigned records…</p>
+                <div class="legacy-assignment-row">
+                  <label class="field"><span>Assign all unassigned records to</span><select id="legacyUnitSelect"><option value="">Select unit...</option></select></label>
+                  <button id="assignLegacyBtn" class="secondary" type="button">Assign Unassigned Records</button>
+                </div>
+              </div>
+            </form>
+            <div class="app-panel">
+              <div class="panel-heading"><div><h2>Configured Units</h2><p>Inactive units remain available in historical reports but are marked inactive.</p></div></div>
+              <div class="table-wrap"><table>
+                <thead><tr><th>Charter</th><th>Unit Name</th><th>Status</th><th></th></tr></thead>
+                <tbody id="unitsTableBody"></tbody>
+              </table></div>
             </div>
           </section>
 
@@ -860,7 +974,7 @@ tbody tr:hover { background: #fafcfd; }
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script>window.CAP_APP_CONFIG = window.CAP_APP_CONFIG || { mode: "demo" };</script>
   <script src="config.js"></script>
-  <script src="offline-store.js"></script>
-  <script src="app.js"></script>
+  <script src="offline-store.js?v=2.0.0"></script>
+  <script src="app.js?v=2.0.0"></script>
 </body>
 </html>

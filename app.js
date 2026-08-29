@@ -10,6 +10,8 @@
   let chartCategory = null;
   let chartRating = null;
   let gradingRules = null;
+  let unitsCache = [];
+  let inspectorDirectory = [];
   let bulkRowSerial = 0;
   const offlineStore = window.CAPOfflineStore || null;
   let syncInProgress = false;
@@ -54,7 +56,8 @@
     session: 'cap_uniform_demo_session_v1',
     cadets: 'cap_uniform_demo_cadets_v1',
     inspections: 'cap_uniform_demo_inspections_v1',
-    gradingRules: 'cap_uniform_demo_grading_rules_v1'
+    gradingRules: 'cap_uniform_demo_grading_rules_v1',
+    units: 'cap_uniform_demo_units_v1'
   };
 
   const memoryStore = {};
@@ -83,6 +86,7 @@
     if (isDemo) {
       $('demoHint').classList.remove('hidden');
       await ensureDemoAdmin();
+      await ensureDemoUnit();
     } else {
       if (!CONFIG.supabaseUrl || !CONFIG.supabasePublishableKey) {
         $('loginMessage').textContent = 'Supabase mode is enabled, but config.js is missing the project URL or publishable key.';
@@ -127,9 +131,22 @@
     $('capid').addEventListener('blur', autofillCadet);
     $('inspectionForm').addEventListener('submit', saveInspectionFromForm);
     $('historyCadetSelect').addEventListener('change', renderSelectedCadetHistory);
+    $('historyUnitFilter').addEventListener('change', async () => { await refreshCadetSelectors(); await renderSelectedCadetHistory(); });
+    $('historyDateRange').addEventListener('change', () => { toggleCustomDates('history'); renderSelectedCadetHistory(); });
+    $('historyStartDate').addEventListener('change', renderSelectedCadetHistory);
+    $('historyEndDate').addEventListener('change', renderSelectedCadetHistory);
+    $('dashboardUnitFilter').addEventListener('change', renderDashboard);
+    $('dashboardDateRange').addEventListener('change', () => { toggleCustomDates('dashboard'); renderDashboard(); });
+    $('dashboardStartDate').addEventListener('change', renderDashboard);
+    $('dashboardEndDate').addEventListener('change', renderDashboard);
+    $('inspectorUnitFilter').addEventListener('change', renderInspectorAnalysis);
+    $('inspectorDateRange').addEventListener('change', () => { toggleCustomDates('inspector'); renderInspectorAnalysis(); });
+    $('inspectorStartDate').addEventListener('change', renderInspectorAnalysis);
+    $('inspectorEndDate').addEventListener('change', renderInspectorAnalysis);
     $('printCadetBtn').addEventListener('click', () => window.print());
     $('exportCadetBtn').addEventListener('click', exportSelectedCadetCSV);
     $('exportAllBtn').addEventListener('click', exportAllCSV);
+    $('exportInspectorBtn').addEventListener('click', exportInspectorAnalysisCSV);
     $('createUserForm').addEventListener('submit', handleCreateUser);
     $('bulkAddRowBtn').addEventListener('click', () => addBulkRow());
     $('bulkAdd10Btn').addEventListener('click', () => seedBulkRows(10));
@@ -137,6 +154,9 @@
     $('bulkSubmitBtn').addEventListener('click', saveBulkInspections);
     $('gradingRulesForm').addEventListener('submit', handleSaveGradingRules);
     $('resetRulesBtn').addEventListener('click', restoreDefaultGradingRules);
+    $('unitForm').addEventListener('submit', handleSaveUnit);
+    $('cancelUnitEditBtn').addEventListener('click', resetUnitForm);
+    $('assignLegacyBtn').addEventListener('click', assignLegacyRecords);
     ['airmanPassMin','airmanExcellentMin','ncoPassMin','ncoExcellentMin'].forEach(id => $(id).addEventListener('input', previewGradingRules));
   }
 
@@ -331,6 +351,9 @@
       console.warn('Could not load grading rules; using cached/default rules.', err);
       gradingRules = (offlineStore && await offlineStore.getCachedGradingRules().catch(() => null)) || cloneDefaultRules();
     }
+    try { unitsCache = await listUnits(); } catch (err) { console.warn('Could not load units.', err); unitsCache = []; }
+    try { inspectorDirectory = await listInspectorDirectory(); } catch (err) { console.warn('Could not load inspector directory.', err); inspectorDirectory = []; }
+    populateUnitSelectors();
     updateGradingRuleForm();
     updateLiveScore();
     refreshAllBulkRows();
@@ -350,7 +373,10 @@
     }
 
     await refreshCadetSelectors();
-    if (profile.role === 'admin' && navigator.onLine) await refreshUsers();
+    if (profile.role === 'admin') {
+      if (navigator.onLine || isDemo) await refreshUsers();
+      await refreshUnitsAdmin();
+    }
     await updateSyncStatus();
     setTimeout(() => $('capid').focus(), 0);
   }
@@ -381,7 +407,7 @@
       setTimeout(() => $('bulkTableBody').querySelector('.bulk-capid')?.focus(), 0);
     }
     if (viewId === 'reportsView') switchReport('historyView');
-    if (viewId === 'usersView') { refreshUsers(); updateGradingRuleForm(); }
+    if (viewId === 'usersView') { refreshUsers(); updateGradingRuleForm(); refreshUnitsAdmin(); }
   }
 
   function switchReport(reportId) {
@@ -394,6 +420,7 @@
       if ($('historyCadetSelect').value) renderSelectedCadetHistory();
     }
     if (reportId === 'dashboardView') renderDashboard();
+    if (reportId === 'inspectorView') renderInspectorAnalysis();
   }
 
   function gradeOptionsHtml(selected = '') {
@@ -416,7 +443,8 @@
     tr.dataset.rowId = String(++bulkRowSerial);
     tr.innerHTML = `
       <td><input class="bulk-capid" inputmode="numeric" maxlength="12" value="${escapeHtml(data.capid || '')}" placeholder="CAPID"></td>
-      <td><input class="bulk-name" value="${escapeHtml(data.name || '')}" placeholder="Cadet name"></td>
+      <td><input class="bulk-last-name" value="${escapeHtml(data.last_name || '')}" placeholder="Last"></td>
+      <td><input class="bulk-first-name" value="${escapeHtml(data.first_name || '')}" placeholder="First"></td>
       <td><select class="bulk-grade">${gradeOptionsHtml(data.grade || '')}</select></td>
       ${CRITERIA.map(c => `<td><select class="bulk-rating" data-key="${c.key}" title="${escapeHtml(c.title + ': ' + c.description)}">${ratingOptionsHtml(data[c.key] ?? '')}</select></td>`).join('')}
       <td><span class="bulk-score">0/10</span></td>
@@ -438,14 +466,15 @@
       scores[sel.dataset.key] = sel.value === '' ? 0 : Number(sel.value);
     });
     const capid = tr.querySelector('.bulk-capid').value.trim();
-    const name = tr.querySelector('.bulk-name').value.trim();
+    const last_name = tr.querySelector('.bulk-last-name').value.trim();
+    const first_name = tr.querySelector('.bulk-first-name').value.trim();
     const grade = tr.querySelector('.bulk-grade').value;
-    const blank = !capid && !name && !grade && [...tr.querySelectorAll('.bulk-rating')].every(s => s.value === '');
-    const complete = Boolean(capid && name && grade && scoresComplete);
+    const blank = !capid && !last_name && !first_name && !grade && [...tr.querySelectorAll('.bulk-rating')].every(s => s.value === '');
+    const complete = Boolean(capid && last_name && first_name && grade && scoresComplete);
     const total = Object.values(scores).reduce((a,b) => a + Number(b), 0);
     const group = gradeGroup(grade);
     const result = calculateRating(group, total);
-    return { capid, name, grade, scores, blank, complete, total, group, result };
+    return { capid, last_name, first_name, name: `${first_name} ${last_name}`.trim(), grade, scores, blank, complete, total, group, result };
   }
 
   function updateBulkRow(tr) {
@@ -481,7 +510,8 @@
       const cadets = await listCadets();
       const cadet = cadets.find(c => c.capid === capid);
       if (cadet) {
-        tr.querySelector('.bulk-name').value = cadet.name;
+        tr.querySelector('.bulk-last-name').value = cadet.last_name || splitLegacyName(cadet.name).last_name;
+        tr.querySelector('.bulk-first-name').value = cadet.first_name || splitLegacyName(cadet.name).first_name;
         tr.querySelector('.bulk-grade').value = cadet.grade;
         updateBulkRow(tr);
       }
@@ -502,6 +532,8 @@
   async function saveBulkInspections() {
     setMessage('bulkMessage', '', '');
     const date = $('bulkInspectionDate').value;
+    const unitId = $('bulkUnit').value;
+    if (!unitId) return setMessage('bulkMessage', 'Select the unit for this inspection group.', 'error');
     if (!date) return setMessage('bulkMessage', 'Choose an inspection date.', 'error');
     const trs = [...document.querySelectorAll('.bulk-entry-row')];
     const parsed = trs.map(tr => ({ tr, row: getBulkRowData(tr) }));
@@ -522,22 +554,15 @@
     let saved = 0;
     try {
       for (const { row } of ready) {
-        await saveInspectionLocalFirst({ capid: row.capid, name: row.name, grade: row.grade }, {
-          inspection_date: date,
-          grade_at_inspection: row.grade,
-          grade_group: row.group,
-          ...row.scores,
-          notes: null,
-          evaluator_id: currentProfile.id,
-          total_score: row.total,
-          overall_rating: row.result.rating,
-          passed: row.result.passed
+        await saveInspectionLocalFirst({ capid: row.capid, first_name: row.first_name, last_name: row.last_name, name: row.name, grade: row.grade, current_unit_id: Number(unitId) }, {
+          unit_id: Number(unitId), inspection_date: date, grade_at_inspection: row.grade, grade_group: row.group,
+          ...row.scores, notes: null, evaluator_id: currentProfile.id, total_score: row.total,
+          overall_rating: row.result.rating, passed: row.result.passed
         });
         saved++;
       }
 
-      let syncResult = { synced: 0, failed: 0, pending: saved };
-      if (!isDemo && navigator.onLine) syncResult = await syncPendingInspections({ showToast: false, refreshAfter: true });
+      if (!isDemo && navigator.onLine) await syncPendingInspections({ showToast: false, refreshAfter: true });
       const queued = await getPendingCount();
       const message = queued
         ? `Saved ${saved} inspection${saved === 1 ? '' : 's'} on this tablet. ${queued} waiting to sync.`
@@ -653,10 +678,13 @@
     const cadets = await listCadets();
     const cadet = cadets.find(c => c.capid === capid);
     if (cadet) {
-      $('cadetName').value = cadet.name;
+      const legacy = splitLegacyName(cadet.name);
+      $('cadetFirstName').value = cadet.first_name || legacy.first_name;
+      $('cadetLastName').value = cadet.last_name || legacy.last_name;
       $('cadetGrade').value = cadet.grade;
+      if (cadet.current_unit_id && [...$('inspectionUnit').options].some(o => o.value === String(cadet.current_unit_id))) $('inspectionUnit').value = String(cadet.current_unit_id);
       updateLiveScore();
-      toast(`Loaded ${cadet.name}`);
+      toast(`Loaded ${cadetDisplayName(cadet)}`);
     }
   }
 
@@ -665,16 +693,16 @@
     setMessage('inspectionMessage', '', '');
     const button = $('saveInspectionBtn');
     const { scores, complete } = getScoresFromForm();
-    if (!complete) {
-      setMessage('inspectionMessage', 'Score all five inspection categories before saving.', 'error');
-      return;
-    }
+    if (!complete) return setMessage('inspectionMessage', 'Score all five inspection categories before saving.', 'error');
 
     const capid = $('capid').value.trim();
-    const name = $('cadetName').value.trim();
+    const first_name = $('cadetFirstName').value.trim();
+    const last_name = $('cadetLastName').value.trim();
     const grade = $('cadetGrade').value;
     const date = $('inspectionDate').value;
-    if (!capid || !name || !grade || !date) return;
+    const unitId = $('inspectionUnit').value;
+    if (!capid || !first_name || !last_name || !grade || !date || !unitId) return setMessage('inspectionMessage', 'Complete the unit, cadet information, and date.', 'error');
+    const name = `${first_name} ${last_name}`.trim();
 
     const group = gradeGroup(grade);
     const total = Object.values(scores).reduce((a, b) => a + b, 0);
@@ -683,22 +711,16 @@
     button.textContent = 'Saving to tablet...';
 
     try {
-      await saveInspectionLocalFirst({ capid, name, grade }, {
-        inspection_date: date,
-        grade_at_inspection: grade,
-        grade_group: group,
-        ...scores,
-        notes: $('notes').value.trim() || null,
-        evaluator_id: currentProfile.id,
-        total_score: total,
-        overall_rating: result.rating,
-        passed: result.passed
+      await saveInspectionLocalFirst({ capid, first_name, last_name, name, grade, current_unit_id: Number(unitId) }, {
+        unit_id: Number(unitId), inspection_date: date, grade_at_inspection: grade, grade_group: group,
+        ...scores, notes: $('notes').value.trim() || null, evaluator_id: currentProfile.id,
+        total_score: total, overall_rating: result.rating, passed: result.passed
       });
 
       if (!isDemo && navigator.onLine) await syncPendingInspections({ showToast: false, refreshAfter: true });
       const pending = await getPendingCount();
       const syncText = pending ? ` Saved on this tablet; ${pending} inspection${pending === 1 ? '' : 's'} waiting to sync.` : ' Synchronized with Supabase.';
-      setMessage('inspectionMessage', `Saved: ${name} — ${total}/10, ${result.rating}, ${result.passed ? 'Passing' : 'Not Passing'}.${syncText}`, 'success');
+      setMessage('inspectionMessage', `Saved: ${last_name}, ${first_name} — ${total}/10, ${result.rating}, ${result.passed ? 'Passing' : 'Not Passing'}.${syncText}`, 'success');
       toast(pending ? 'Inspection saved offline' : 'Inspection saved and synced');
       clearInspectionForm();
       await refreshCadetSelectors();
@@ -713,7 +735,8 @@
 
   function clearInspectionForm() {
     $('capid').value = '';
-    $('cadetName').value = '';
+    $('cadetFirstName').value = '';
+    $('cadetLastName').value = '';
     $('cadetGrade').value = '';
     $('notes').value = '';
     document.querySelectorAll('.inspection-rating').forEach(i => i.value = '');
@@ -722,120 +745,350 @@
   }
 
   async function refreshCadetSelectors() {
-    const cadets = await listCadets();
+    const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
     const sel = $('historyCadetSelect');
     const prior = sel.value;
-    sel.innerHTML = '<option value="">Select cadet...</option>' + cadets
-      .sort((a,b) => a.name.localeCompare(b.name))
-      .map(c => `<option value="${c.id}">${escapeHtml(c.name)} — ${escapeHtml(c.grade)} — ${escapeHtml(c.capid)}</option>`).join('');
+    const unitFilter = $('historyUnitFilter')?.value || 'all';
+    let filtered = cadets;
+    if (unitFilter !== 'all') {
+      const idsWithHistory = new Set(inspections.filter(i => unitMatches(i, unitFilter)).map(i => inspectionCadetKey(i)));
+      filtered = cadets.filter(c => unitFilter === 'unassigned'
+        ? !c.current_unit_id || idsWithHistory.has(cadetKey(c))
+        : String(c.current_unit_id || '') === String(unitFilter) || idsWithHistory.has(cadetKey(c)));
+    }
+    sel.innerHTML = '<option value="">Select cadet...</option>' + filtered
+      .sort((a,b) => cadetSortName(a).localeCompare(cadetSortName(b)))
+      .map(c => `<option value="${escapeHtml(cadetKey(c))}">${escapeHtml(cadetDisplayName(c))} — ${escapeHtml(c.grade)} — ${escapeHtml(c.capid)}</option>`).join('');
     if ([...sel.options].some(o => o.value === prior)) sel.value = prior;
   }
 
   async function renderSelectedCadetHistory() {
-    const cadetId = $('historyCadetSelect').value;
-    if (!cadetId) {
+    const selectedKey = $('historyCadetSelect').value;
+    if (!selectedKey) {
       $('historyEmpty').classList.remove('hidden');
       $('historyContent').classList.add('hidden');
+      $('historyFilterSummary').textContent = reportFilterSummary('history');
       return;
     }
     const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
-    const cadet = cadets.find(c => String(c.id) === String(cadetId));
-    const rows = inspections.filter(i => String(i.cadet_id) === String(cadetId)).sort((a,b) => a.inspection_date.localeCompare(b.inspection_date));
+    const cadet = cadets.find(c => cadetKey(c) === selectedKey);
+    const range = getReportDateRange('history');
+    const unitFilter = $('historyUnitFilter').value;
+    const rows = inspections.filter(i => inspectionBelongsToCadet(i, cadet, selectedKey) && unitMatches(i, unitFilter) && dateMatches(i.inspection_date, range))
+      .sort((a,b) => a.inspection_date.localeCompare(b.inspection_date));
 
+    $('historyFilterSummary').textContent = reportFilterSummary('history');
     $('historyEmpty').classList.add('hidden');
     $('historyContent').classList.remove('hidden');
     const avg = rows.length ? average(rows.map(r => r.total_score)) : 0;
     const passRate = rows.length ? Math.round(rows.filter(r => r.passed).length / rows.length * 100) : 0;
     const latest = rows.length ? rows[rows.length - 1] : null;
+    const highest = rows.length ? Math.max(...rows.map(r => Number(r.total_score))) : 0;
+    const lowest = rows.length ? Math.min(...rows.map(r => Number(r.total_score))) : 0;
     $('cadetStats').innerHTML = [
-      statCard('Cadet', cadet?.name || '', `${cadet?.grade || ''} · CAPID ${cadet?.capid || ''}`),
-      statCard('Inspections', rows.length, 'Recorded inspections'),
-      statCard('Average Score', avg.toFixed(1), 'Out of 10'),
+      statCard('Cadet', cadetDisplayName(cadet || {}), `${cadet?.grade || ''} · CAPID ${cadet?.capid || ''}`),
+      statCard('Inspections', rows.length, rows.length ? `Range ${formatRange(range)}` : 'No inspections in selected range'),
+      statCard('Average Score', avg.toFixed(1), rows.length ? `High ${highest} · Low ${lowest}` : 'Out of 10'),
       statCard('Pass Rate', `${passRate}%`, latest ? `Latest: ${latest.total_score}/10 ${latest.overall_rating}` : 'No inspections')
     ].join('');
 
     $('historyTableBody').innerHTML = rows.slice().reverse().map(r => `
-      <tr>
-        <td>${formatDate(r.inspection_date)}</td><td>${escapeHtml(r.grade_at_inspection)}</td>
-        <td>${r.personal_appearance}</td><td>${r.garments}</td><td>${r.accoutrements}</td><td>${r.footwear}</td><td>${r.military_bearing}</td>
-        <td><strong>${r.total_score}/10</strong></td><td>${escapeHtml(r.overall_rating)}</td><td>${r.passed ? 'Pass' : 'Not Pass'}</td>
-      </tr>`).join('') || '<tr><td colspan="10">No inspections recorded.</td></tr>';
+      <tr><td>${formatDate(r.inspection_date)}</td><td>${escapeHtml(unitLabelForInspection(r))}</td><td>${escapeHtml(r.grade_at_inspection)}</td>
+      <td>${r.personal_appearance}</td><td>${r.garments}</td><td>${r.accoutrements}</td><td>${r.footwear}</td><td>${r.military_bearing}</td>
+      <td><strong>${r.total_score}/10</strong></td><td>${escapeHtml(r.overall_rating)}</td><td>${r.passed ? 'Pass' : 'Not Pass'}</td></tr>`).join('') || '<tr><td colspan="11">No inspections in this date/unit range.</td></tr>';
 
     if (globalThis.Chart) {
       if (chartCadet) chartCadet.destroy();
       chartCadet = new Chart($('cadetTrendChart'), {
-        type: 'line',
-        data: { labels: rows.map(r => shortDate(r.inspection_date)), datasets: [{ label: 'Overall score', data: rows.map(r => r.total_score), tension: .25 }] },
+        type: 'line', data: { labels: rows.map(r => shortDate(r.inspection_date)), datasets: [{ label: 'Overall score', data: rows.map(r => r.total_score), tension: .25 }] },
         options: { responsive: true, maintainAspectRatio: true, scales: { y: { min: 0, max: 10, ticks: { stepSize: 1 } } } }
       });
     }
   }
 
   async function renderDashboard() {
-    const inspections = await listInspections();
+    const allInspections = await listInspections();
     const cadets = await listCadets();
+    const range = getReportDateRange('dashboard');
+    const unitFilter = $('dashboardUnitFilter').value;
+    const inspections = allInspections.filter(i => unitMatches(i, unitFilter) && dateMatches(i.inspection_date, range));
+    $('dashboardFilterSummary').textContent = reportFilterSummary('dashboard');
     const total = inspections.length;
     const avgScore = total ? average(inspections.map(i => i.total_score)) : 0;
     const passRate = total ? Math.round(inspections.filter(i => i.passed).length / total * 100) : 0;
+    const medianScore = total ? median(inspections.map(i => Number(i.total_score))) : 0;
     $('dashboardStats').innerHTML = [
-      statCard('Total Inspections', total, 'All recorded inspections'),
-      statCard('Cadets Inspected', new Set(inspections.map(i => i.cadet_id)).size, `${cadets.length} cadets in roster`),
-      statCard('Average Score', avgScore.toFixed(1), 'Out of 10'),
+      statCard('Total Inspections', total, formatRange(range)),
+      statCard('Cadets Inspected', new Set(inspections.map(i => inspectionCadetKey(i))).size, unitFilter === 'all' ? 'Across all units' : unitLabelFromFilter(unitFilter)),
+      statCard('Average Score', avgScore.toFixed(1), `Median ${medianScore.toFixed(1)} · out of 10`),
       statCard('Pass Rate', `${passRate}%`, `${inspections.filter(i => i.passed).length} passing inspections`)
     ].join('');
 
     const categoryAverages = CRITERIA.map(c => total ? average(inspections.map(i => Number(i[c.key]))) : 0);
-    const weakestIndex = categoryAverages.indexOf(Math.min(...categoryAverages));
+    const weakestIndex = total ? categoryAverages.indexOf(Math.min(...categoryAverages)) : 0;
     const ratings = {
       'Needs Improvement': inspections.filter(i => i.overall_rating === 'Needs Improvement').length,
       'Satisfactory': inspections.filter(i => i.overall_rating === 'Satisfactory').length,
       'Excellent': inspections.filter(i => i.overall_rating === 'Excellent').length
     };
-
     const months = {};
-    inspections.forEach(i => {
-      const month = i.inspection_date.slice(0, 7);
-      (months[month] ||= []).push(i.total_score);
-    });
+    inspections.forEach(i => { const month = i.inspection_date.slice(0, 7); (months[month] ||= []).push(i.total_score); });
     const monthKeys = Object.keys(months).sort();
 
     if (globalThis.Chart) {
       destroyChart(chartMonthly); destroyChart(chartCategory); destroyChart(chartRating);
-      chartMonthly = new Chart($('monthlyTrendChart'), {
-        type: 'line', data: { labels: monthKeys.map(formatMonth), datasets: [{ label: 'Average total', data: monthKeys.map(m => average(months[m])), tension: .25 }] },
-        options: { responsive: true, scales: { y: { min: 0, max: 10 } } }
-      });
-      chartCategory = new Chart($('categoryChart'), {
-        type: 'bar', data: { labels: CRITERIA.map(c => c.title), datasets: [{ label: 'Average (0–2)', data: categoryAverages }] },
-        options: { responsive: true, scales: { y: { min: 0, max: 2 } } }
-      });
-      chartRating = new Chart($('ratingChart'), {
-        type: 'doughnut', data: { labels: Object.keys(ratings), datasets: [{ data: Object.values(ratings) }] },
-        options: { responsive: true }
-      });
+      chartMonthly = new Chart($('monthlyTrendChart'), { type: 'line', data: { labels: monthKeys.map(formatMonth), datasets: [{ label: 'Average total', data: monthKeys.map(m => average(months[m])), tension: .25 }] }, options: { responsive: true, scales: { y: { min: 0, max: 10 } } } });
+      chartCategory = new Chart($('categoryChart'), { type: 'bar', data: { labels: CRITERIA.map(c => c.title), datasets: [{ label: 'Average (0–2)', data: categoryAverages }] }, options: { responsive: true, scales: { y: { min: 0, max: 2 } } } });
+      chartRating = new Chart($('ratingChart'), { type: 'doughnut', data: { labels: Object.keys(ratings), datasets: [{ data: Object.values(ratings) }] }, options: { responsive: true } });
     }
 
-    const last30 = new Date(); last30.setDate(last30.getDate() - 30);
-    const recent30 = inspections.filter(i => new Date(`${i.inspection_date}T12:00:00`) >= last30);
     const prior = inspections.slice().sort((a,b) => a.inspection_date.localeCompare(b.inspection_date));
     const firstHalf = prior.slice(0, Math.floor(prior.length / 2));
     const secondHalf = prior.slice(Math.floor(prior.length / 2));
     const trendDelta = firstHalf.length && secondHalf.length ? average(secondHalf.map(i => i.total_score)) - average(firstHalf.map(i => i.total_score)) : 0;
-
     const insights = [];
-    if (!total) insights.push('No inspections have been recorded yet. Add inspections to build unit trends.');
+    if (!total) insights.push('No inspections match the selected unit and date range.');
     else {
       insights.push(`<strong>Most common improvement area:</strong> ${CRITERIA[weakestIndex].title} has the lowest average score at ${categoryAverages[weakestIndex].toFixed(2)}/2.`);
       insights.push(`<strong>Current pass rate:</strong> ${passRate}% across ${total} inspections.`);
-      insights.push(`<strong>Recent activity:</strong> ${recent30.length} inspection${recent30.length === 1 ? '' : 's'} recorded in the last 30 days.`);
-      if (firstHalf.length && secondHalf.length) insights.push(`<strong>Long-term score trend:</strong> the newer half of inspections averages ${Math.abs(trendDelta).toFixed(1)} points ${trendDelta >= 0 ? 'higher' : 'lower'} than the older half.`);
+      insights.push(`<strong>Median score:</strong> ${medianScore.toFixed(1)}/10; average is ${avgScore.toFixed(1)}/10.`);
+      if (firstHalf.length && secondHalf.length) insights.push(`<strong>Within-range trend:</strong> the newer half averages ${Math.abs(trendDelta).toFixed(1)} points ${trendDelta >= 0 ? 'higher' : 'lower'} than the older half.`);
     }
     $('programInsights').innerHTML = insights.map(i => `<div class="insight">${i}</div>`).join('');
 
     $('recentTableBody').innerHTML = inspections.slice().sort((a,b) => b.inspection_date.localeCompare(a.inspection_date)).slice(0, 15).map(i => {
-      const c = i.cadets || cadets.find(x => String(x.id) === String(i.cadet_id)) || {};
-      return `<tr><td>${formatDate(i.inspection_date)}</td><td>${escapeHtml(c.capid || '')}</td><td>${escapeHtml(c.name || '')}</td><td>${escapeHtml(i.grade_at_inspection)}</td><td><strong>${i.total_score}/10</strong></td><td>${escapeHtml(i.overall_rating)}</td><td>${i.passed ? 'Pass' : 'Not Pass'}</td></tr>`;
-    }).join('') || '<tr><td colspan="7">No inspections recorded.</td></tr>';
+      const c = inspectionCadet(i, cadets);
+      return `<tr><td>${formatDate(i.inspection_date)}</td><td>${escapeHtml(unitLabelForInspection(i))}</td><td>${escapeHtml(c.capid || '')}</td><td>${escapeHtml(cadetDisplayName(c))}</td><td>${escapeHtml(i.grade_at_inspection)}</td><td><strong>${i.total_score}/10</strong></td><td>${escapeHtml(i.overall_rating)}</td><td>${i.passed ? 'Pass' : 'Not Pass'}</td></tr>`;
+    }).join('') || '<tr><td colspan="8">No inspections recorded for this filter.</td></tr>';
+  }
+
+  function splitLegacyName(name = '') {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) return { first_name: parts[0] || '', last_name: '' };
+    return { first_name: parts.slice(0, -1).join(' '), last_name: parts.at(-1) };
+  }
+
+  function normalizeCadet(c = {}) {
+    const legacy = splitLegacyName(c.name);
+    const first_name = c.first_name || legacy.first_name;
+    const last_name = c.last_name || legacy.last_name;
+    return { ...c, first_name, last_name, name: `${first_name} ${last_name}`.trim() || c.name || '' };
+  }
+
+  function cadetDisplayName(c = {}) {
+    c = normalizeCadet(c);
+    return [c.last_name, c.first_name].filter(Boolean).join(', ') || c.name || '';
+  }
+  function cadetSortName(c = {}) { return cadetDisplayName(c).toLowerCase(); }
+  function cadetKey(c = {}) { return String(c.id ?? `capid:${c.capid || ''}`); }
+  function inspectionCadetKey(i = {}) { return String(i.cadet_id ?? (i.capid ? `capid:${i.capid}` : '')); }
+  function inspectionCadet(i, cadets = []) { return normalizeCadet(i.cadets || cadets.find(c => String(c.id) === String(i.cadet_id)) || cadets.find(c => c.capid && c.capid === i.capid) || { capid: i.capid, first_name: i.cadet_first_name, last_name: i.cadet_last_name, name: i.cadet_name, grade: i.cadet_grade }); }
+  function inspectionBelongsToCadet(i, cadet, selectedKey) { return inspectionCadetKey(i) === selectedKey || (!!cadet?.capid && (i.capid === cadet.capid || i.cadets?.capid === cadet.capid)); }
+
+  async function listUnits() {
+    if (isDemo) return loadLS(LS.units, []);
+    if (navigator.onLine && sb) {
+      try {
+        const { data, error } = await sb.from('units').select('*').order('charter_number');
+        if (error) throw error;
+        unitsCache = data || [];
+        if (offlineStore) await offlineStore.cacheUnits(unitsCache);
+        return unitsCache;
+      } catch (err) { console.warn('Unit server read failed; using tablet cache.', err); }
+    }
+    return offlineStore ? await offlineStore.getUnits() : unitsCache;
+  }
+
+  async function listInspectorDirectory() {
+    if (isDemo) return loadLS(LS.users, []).map(u => ({ id: u.id, display_name: u.display_name }));
+    if (navigator.onLine && sb) {
+      try {
+        const { data, error } = await sb.rpc('list_inspectors');
+        if (error) throw error;
+        inspectorDirectory = data || [];
+        if (offlineStore) await offlineStore.cacheInspectorDirectory(inspectorDirectory);
+        return inspectorDirectory;
+      } catch (err) { console.warn('Inspector directory read failed; using cache.', err); }
+    }
+    return offlineStore ? await offlineStore.getInspectorDirectory() : inspectorDirectory;
+  }
+
+  function unitOptionLabel(u) { return `${u.charter_number} — ${u.name}${u.active === false ? ' (Inactive)' : ''}`; }
+  function populateUnitSelectors() {
+    const prior = {};
+    ['inspectionUnit','bulkUnit','historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter','legacyUnitSelect'].forEach(id => { if ($(id)) prior[id] = $(id).value; });
+    const activeOptions = unitsCache.map(u => `<option value="${u.id}" ${u.active === false ? 'disabled' : ''}>${escapeHtml(unitOptionLabel(u))}</option>`).join('');
+    ['inspectionUnit','bulkUnit','legacyUnitSelect'].forEach(id => { if ($(id)) $(id).innerHTML = '<option value="">Select unit...</option>' + activeOptions; });
+    const reportOptions = '<option value="all">All Units</option><option value="unassigned">Unassigned / Legacy</option>' + unitsCache.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
+    ['historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter'].forEach(id => { if ($(id)) $(id).innerHTML = reportOptions; });
+    Object.entries(prior).forEach(([id, value]) => { if ($(id) && [...$(id).options].some(o => o.value === value)) $(id).value = value; });
+    const active = unitsCache.filter(u => u.active !== false);
+    if (active.length === 1) {
+      if (!$('inspectionUnit').value) $('inspectionUnit').value = String(active[0].id);
+      if (!$('bulkUnit').value) $('bulkUnit').value = String(active[0].id);
+    }
+  }
+
+  function unitLabelFromFilter(value) {
+    if (value === 'all') return 'All Units';
+    if (value === 'unassigned') return 'Unassigned / Legacy';
+    const u = unitsCache.find(x => String(x.id) === String(value));
+    return u ? `${u.charter_number} — ${u.name}` : 'Selected Unit';
+  }
+  function unitLabelForInspection(i) {
+    if (i.units?.charter_number) return `${i.units.charter_number} — ${i.units.name}`;
+    const u = unitsCache.find(x => String(x.id) === String(i.unit_id));
+    return u ? `${u.charter_number} — ${u.name}` : 'Unassigned';
+  }
+  function unitMatches(i, filter) { if (!filter || filter === 'all') return true; if (filter === 'unassigned') return !i.unit_id; return String(i.unit_id) === String(filter); }
+
+  function toggleCustomDates(prefix) {
+    const custom = $(`${prefix}DateRange`).value === 'custom';
+    document.querySelectorAll(`.custom-${prefix}-date`).forEach(el => el.classList.toggle('hidden', !custom));
+  }
+  function monthsAgoISO(months) { const d = new Date(); d.setHours(12,0,0,0); d.setMonth(d.getMonth() - months); return localDateISO(d); }
+  function getReportDateRange(prefix) {
+    const choice = $(`${prefix}DateRange`)?.value || 'all';
+    const today = localDateISO();
+    if (choice === '1m') return { start: monthsAgoISO(1), end: today, label: 'Last Month' };
+    if (choice === '3m') return { start: monthsAgoISO(3), end: today, label: 'Last 3 Months' };
+    if (choice === '6m') return { start: monthsAgoISO(6), end: today, label: 'Last 6 Months' };
+    if (choice === '12m') return { start: monthsAgoISO(12), end: today, label: 'Last 12 Months' };
+    if (choice === 'ytd') return { start: `${new Date().getFullYear()}-01-01`, end: today, label: 'Year to Date' };
+    if (choice === 'previous_year') { const y = new Date().getFullYear() - 1; return { start: `${y}-01-01`, end: `${y}-12-31`, label: `Calendar Year ${y}` }; }
+    if (choice === 'custom') {
+      const start = $(`${prefix}StartDate`)?.value || null, end = $(`${prefix}EndDate`)?.value || null;
+      return { start, end, label: start || end ? `${start ? formatDate(start) : 'Beginning'} to ${end ? formatDate(end) : 'Today'}` : 'Custom Range' };
+    }
+    return { start: null, end: null, label: 'All Time' };
+  }
+  function dateMatches(date, range) { if (!date) return false; if (range.start && date < range.start) return false; if (range.end && date > range.end) return false; return true; }
+  function formatRange(range) { return range?.label || 'All Time'; }
+  function reportFilterSummary(prefix) { return `${unitLabelFromFilter($(`${prefix}UnitFilter`)?.value || 'all')} · ${formatRange(getReportDateRange(prefix))}`; }
+
+  function median(values) { if (!values.length) return 0; const a = values.slice().map(Number).sort((x,y) => x-y); const m = Math.floor(a.length/2); return a.length % 2 ? a[m] : (a[m-1]+a[m])/2; }
+  function sampleSD(values) { if (values.length < 2) return 0; const m = average(values); return Math.sqrt(values.reduce((sum,v) => sum + (Number(v)-m)**2,0)/(values.length-1)); }
+  function signed(value, digits=2) { const n=Number(value)||0; return `${n>=0?'+':''}${n.toFixed(digits)}`; }
+  function deviationClass(value) { return value > .15 ? 'metric-positive' : value < -.15 ? 'metric-negative' : 'metric-neutral'; }
+
+  async function renderInspectorAnalysis() {
+    const [allInspections, cadets] = await Promise.all([listInspections(), listCadets()]);
+    if (!inspectorDirectory.length) inspectorDirectory = await listInspectorDirectory();
+    const range = getReportDateRange('inspector');
+    const unitFilter = $('inspectorUnitFilter').value;
+    const rows = allInspections.filter(i => unitMatches(i, unitFilter) && dateMatches(i.inspection_date, range));
+    $('inspectorFilterSummary').textContent = reportFilterSummary('inspector');
+    const scores = rows.map(r => Number(r.total_score));
+    const overallMean = average(scores), overallSD = sampleSD(scores);
+    const inspectors = [...new Set(rows.map(r => r.evaluator_id).filter(Boolean))];
+    const cadetId = i => inspectionCadetKey(i) || i.capid;
+    const gradeBaseline = {};
+    rows.forEach(r => { (gradeBaseline[r.grade_group] ||= []).push(Number(r.total_score)); });
+    const catGradeBaseline = {};
+    for (const c of CRITERIA) { catGradeBaseline[c.key] = {}; rows.forEach(r => (catGradeBaseline[c.key][r.grade_group] ||= []).push(Number(r[c.key]))); }
+
+    const analysis = inspectors.map(id => {
+      const mine = rows.filter(r => String(r.evaluator_id) === String(id));
+      const residuals = mine.map(r => {
+        const othersSameCadet = rows.filter(o => String(o.evaluator_id) !== String(id) && cadetId(o) === cadetId(r));
+        const expected = othersSameCadet.length ? average(othersSameCadet.map(o => Number(o.total_score))) : average(gradeBaseline[r.grade_group] || scores);
+        return Number(r.total_score) - expected;
+      });
+      const adjusted = average(residuals), rawAvg = average(mine.map(r => Number(r.total_score))), rawDiff = rawAvg - overallMean;
+      const residualSD = sampleSD(residuals), se = residuals.length ? residualSD / Math.sqrt(residuals.length) : 0;
+      const ciLow = adjusted - 1.96*se, ciHigh = adjusted + 1.96*se;
+      const effect = overallSD ? adjusted / overallSD : 0;
+      let assessment = 'Typical range';
+      if (mine.length < 10) assessment = 'Insufficient data';
+      else if (mine.length < 20) assessment = adjusted <= -.35 ? 'Preliminary: stricter' : adjusted >= .35 ? 'Preliminary: more lenient' : 'Preliminary: typical';
+      else if (ciHigh < -.25) assessment = 'Likely stricter';
+      else if (ciLow > .25) assessment = 'Likely more lenient';
+      else if (adjusted <= -.35) assessment = 'Tends stricter';
+      else if (adjusted >= .35) assessment = 'Tends more lenient';
+      const categories = {};
+      for (const c of CRITERIA) {
+        const res = mine.map(r => {
+          const other = rows.filter(o => String(o.evaluator_id) !== String(id) && cadetId(o) === cadetId(r));
+          const expected = other.length ? average(other.map(o => Number(o[c.key]))) : average(catGradeBaseline[c.key][r.grade_group] || rows.map(x => Number(x[c.key])));
+          return Number(r[c.key]) - expected;
+        });
+        categories[c.key] = average(res);
+      }
+      const profile = inspectorDirectory.find(p => String(p.id) === String(id));
+      return { id, name: profile?.display_name || `Inspector ${String(id).slice(0,8)}`, n: mine.length, rawAvg, rawDiff, adjusted, effect, ciLow, ciHigh, assessment, categories };
+    }).sort((a,b) => a.adjusted - b.adjusted);
+
+    const matched = rows.filter(r => rows.some(o => String(o.evaluator_id) !== String(r.evaluator_id) && cadetId(o) === cadetId(r))).length;
+    $('inspectorStats').innerHTML = [
+      statCard('Inspectors', analysis.length, `${rows.length} inspections analyzed`),
+      statCard('Overall Mean', overallMean.toFixed(2), 'Score out of 10'),
+      statCard('Score SD', overallSD.toFixed(2), 'Overall score spread'),
+      statCard('Matched-Cadet Coverage', rows.length ? `${Math.round(matched/rows.length*100)}%` : '0%', `${matched} inspections have cross-inspector comparison`)
+    ].join('');
+    $('inspectorTableBody').innerHTML = analysis.map(a => `<tr><td>${escapeHtml(a.name)}</td><td>${a.n}</td><td>${a.rawAvg.toFixed(2)}</td><td class="${deviationClass(a.rawDiff)}">${signed(a.rawDiff)}</td><td class="${deviationClass(a.adjusted)}">${signed(a.adjusted)}</td><td>${signed(a.effect)} SD</td><td>${a.n > 1 ? `${signed(a.ciLow)} to ${signed(a.ciHigh)}` : '—'}</td><td><strong>${escapeHtml(a.assessment)}</strong>${a.n < 20 ? '<div class="confidence-note">Use cautiously; small sample</div>' : ''}</td></tr>`).join('') || '<tr><td colspan="8">No inspections match this filter.</td></tr>';
+    $('inspectorCategoryBody').innerHTML = analysis.map(a => `<tr><td>${escapeHtml(a.name)}</td>${CRITERIA.map(c => `<td class="${deviationClass(a.categories[c.key])}">${signed(a.categories[c.key])}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="6">No inspection data.</td></tr>';
+    window.__lastInspectorAnalysis = analysis;
+  }
+
+  async function exportInspectorAnalysisCSV() {
+    await renderInspectorAnalysis();
+    const rows = window.__lastInspectorAnalysis || [];
+    const header = ['Inspector','Inspections','Average Score','Raw Difference','Adjusted Difference','Standardized Effect SD','CI Low','CI High','Assessment',...CRITERIA.map(c => `${c.title} Adjusted Difference`)];
+    const data = rows.map(a => [a.name,a.n,a.rawAvg.toFixed(3),a.rawDiff.toFixed(3),a.adjusted.toFixed(3),a.effect.toFixed(3),a.ciLow.toFixed(3),a.ciHigh.toFixed(3),a.assessment,...CRITERIA.map(c => a.categories[c.key].toFixed(3))]);
+    downloadCSV([header,...data].map(r => r.map(csvCell).join(',')).join('\n'), `CAP_inspector_analysis_${localDateISO()}.csv`);
+  }
+
+  async function refreshUnitsAdmin() {
+    if (currentProfile?.role !== 'admin') return;
+    try { unitsCache = await listUnits(); populateUnitSelectors(); } catch (err) { console.warn(err); }
+    $('unitsTableBody').innerHTML = unitsCache.map(u => `<tr><td>${escapeHtml(u.charter_number)}</td><td>${escapeHtml(u.name)}</td><td class="${u.active === false ? 'unit-status-inactive' : 'unit-status-active'}">${u.active === false ? 'Inactive' : 'Active'}</td><td><button class="secondary small-action edit-unit-btn" type="button" data-id="${u.id}">Edit</button></td></tr>`).join('') || '<tr><td colspan="4">No units configured yet.</td></tr>';
+    document.querySelectorAll('.edit-unit-btn').forEach(btn => btn.addEventListener('click', () => editUnit(btn.dataset.id)));
+    await updateLegacyCount();
+  }
+
+  async function handleSaveUnit(e) {
+    e.preventDefault();
+    if (currentProfile?.role !== 'admin') return;
+    const payload = { charter_number: $('unitCharterNumber').value.trim().toUpperCase(), name: $('unitName').value.trim(), active: $('unitActive').checked };
+    if (!payload.charter_number || !payload.name) return;
+    if (!isDemo && !navigator.onLine) return setMessage('unitMessage', 'Unit changes require an internet connection.', 'error');
+    try {
+      const editId = $('editUnitId').value;
+      if (isDemo) {
+        const rows = loadLS(LS.units, []);
+        if (editId) Object.assign(rows.find(u => String(u.id) === String(editId)), payload, { updated_at: new Date().toISOString() });
+        else rows.push({ id: nextNumericId(rows), ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+        saveLS(LS.units, rows);
+      } else {
+        const query = editId ? sb.from('units').update(payload).eq('id', editId) : sb.from('units').insert(payload);
+        const { error } = await query; if (error) throw error;
+      }
+      setMessage('unitMessage', editId ? 'Unit updated.' : 'Unit added.', 'success'); resetUnitForm(); await refreshUnitsAdmin(); await refreshCadetSelectors();
+    } catch (err) { setMessage('unitMessage', err.message || String(err), 'error'); }
+  }
+  function editUnit(id) { const u=unitsCache.find(x=>String(x.id)===String(id)); if(!u)return; $('editUnitId').value=u.id; $('unitCharterNumber').value=u.charter_number; $('unitName').value=u.name; $('unitActive').checked=u.active!==false; $('cancelUnitEditBtn').classList.remove('hidden'); $('unitCharterNumber').focus(); }
+  function resetUnitForm() { $('editUnitId').value=''; $('unitCharterNumber').value=''; $('unitName').value=''; $('unitActive').checked=true; $('cancelUnitEditBtn').classList.add('hidden'); }
+  async function updateLegacyCount() {
+    const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
+    const c = cadets.filter(x => !x.current_unit_id).length, i = inspections.filter(x => !x.unit_id).length;
+    $('legacyRecordCount').textContent = `${c} cadet${c===1?'':'s'} and ${i} inspection${i===1?'':'s'} are currently unassigned.`;
+    $('assignLegacyBtn').disabled = !(c || i) || !unitsCache.length;
+  }
+  async function assignLegacyRecords() {
+    const unitId = $('legacyUnitSelect').value; if(!unitId) return setMessage('unitMessage','Select a destination unit first.','error');
+    if (!confirm('Assign every currently unassigned cadet and historical inspection to this unit?')) return;
+    if (!isDemo && !navigator.onLine) return setMessage('unitMessage','This operation requires an internet connection.','error');
+    try {
+      if (isDemo) {
+        const cadets=loadLS(LS.cadets,[]); cadets.forEach(c=>{if(!c.current_unit_id)c.current_unit_id=Number(unitId)}); saveLS(LS.cadets,cadets);
+        const inspections=loadLS(LS.inspections,[]); inspections.forEach(i=>{if(!i.unit_id)i.unit_id=Number(unitId)}); saveLS(LS.inspections,inspections);
+      } else {
+        const { data, error } = await sb.rpc('assign_unassigned_records',{p_unit_id:Number(unitId)}); if(error)throw error;
+        toast(`Assigned ${data?.cadets||0} cadets and ${data?.inspections||0} inspections`);
+        await refreshOfflineCacheFromServer({quiet:true});
+      }
+      setMessage('unitMessage','Unassigned records were assigned successfully.','success'); await refreshUnitsAdmin(); await refreshCadetSelectors();
+    } catch(err){ setMessage('unitMessage',err.message||String(err),'error'); }
   }
 
   async function refreshUsers() {
@@ -869,24 +1122,29 @@
   }
 
   async function exportSelectedCadetCSV() {
-    const cadetId = $('historyCadetSelect').value;
-    if (!cadetId) return toast('Select a cadet first');
+    const selectedKey = $('historyCadetSelect').value;
+    if (!selectedKey) return toast('Select a cadet first');
     const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
-    const cadet = cadets.find(c => String(c.id) === String(cadetId));
-    const rows = inspections.filter(i => String(i.cadet_id) === String(cadetId));
-    downloadCSV(rowsToCSV(rows, cadets), `CAP_uniform_${safeFilename(cadet?.name || 'cadet')}.csv`);
+    const cadet = cadets.find(c => cadetKey(c) === selectedKey);
+    const range = getReportDateRange('history');
+    const rows = inspections.filter(i => inspectionBelongsToCadet(i, cadet, selectedKey) && unitMatches(i, $('historyUnitFilter').value) && dateMatches(i.inspection_date, range));
+    downloadCSV(rowsToCSV(rows, cadets), `CAP_uniform_${safeFilename(cadetDisplayName(cadet || {}) || 'cadet')}.csv`);
   }
 
   async function exportAllCSV() {
     const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
-    downloadCSV(rowsToCSV(inspections, cadets), `CAP_uniform_inspections_${localDateISO()}.csv`);
+    const range = getReportDateRange('dashboard');
+    const rows = inspections.filter(i => unitMatches(i, $('dashboardUnitFilter').value) && dateMatches(i.inspection_date, range));
+    downloadCSV(rowsToCSV(rows, cadets), `CAP_uniform_inspections_${localDateISO()}.csv`);
   }
 
   function rowsToCSV(rows, cadets) {
-    const headers = ['Inspection Date','CAPID','Name','Grade','Personal Appearance','Garments','Accoutrements','Footwear','Military Bearing','Total Score','Overall Rating','Passed','Notes'];
+    const headers = ['Inspection Date','Unit','CAPID','Last Name','First Name','Cadet Grade','Personal Appearance','Garments','Accoutrements','Footwear','Military Bearing','Total Score','Overall Rating','Passed','Inspector','Notes'];
     const data = rows.map(i => {
-      const c = i.cadets || cadets.find(x => String(x.id) === String(i.cadet_id)) || {};
-      return [i.inspection_date,c.capid,c.name,i.grade_at_inspection,i.personal_appearance,i.garments,i.accoutrements,i.footwear,i.military_bearing,i.total_score,i.overall_rating,i.passed ? 'Yes' : 'No',i.notes || ''];
+      const c = inspectionCadet(i, cadets);
+      const legacy = splitLegacyName(c.name);
+      const inspector = inspectorDirectory.find(p => String(p.id) === String(i.evaluator_id));
+      return [i.inspection_date,unitLabelForInspection(i),c.capid,c.last_name || legacy.last_name,c.first_name || legacy.first_name,i.grade_at_inspection,i.personal_appearance,i.garments,i.accoutrements,i.footwear,i.military_bearing,i.total_score,i.overall_rating,i.passed ? 'Yes' : 'No',inspector?.display_name || i.evaluator_id || '',i.notes || ''];
     });
     return [headers, ...data].map(row => row.map(csvCell).join(',')).join('\n');
   }
@@ -899,40 +1157,30 @@
   }
 
   async function listCadets() {
-    if (isDemo) return loadLS(LS.cadets, []);
-    if (navigator.onLine) {
+    if (isDemo) return loadLS(LS.cadets, []).map(normalizeCadet);
+    if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.from('cadets').select('*').order('name');
+        const { data, error } = await sb.from('cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }).order('first_name', { ascending: true, nullsFirst: false });
         if (error) throw error;
-        if (offlineStore) {
-          await offlineStore.cacheCadets(data || []);
-          return await offlineStore.getCadets();
-        }
-        return data || [];
-      } catch (err) {
-        console.warn('Cadet roster server read failed; using tablet cache.', err);
-      }
+        if (offlineStore) { await offlineStore.cacheCadets(data || []); return (await offlineStore.getCadets()).map(normalizeCadet); }
+        return (data || []).map(normalizeCadet);
+      } catch (err) { console.warn('Cadet roster server read failed; using tablet cache.', err); }
     }
-    return offlineStore ? await offlineStore.getCadets() : [];
+    return offlineStore ? (await offlineStore.getCadets()).map(normalizeCadet) : [];
   }
 
   async function upsertCadet(cadet) {
+    cadet = normalizeCadet(cadet);
     if (isDemo) {
       const rows = loadLS(LS.cadets, []);
       let existing = rows.find(r => r.capid === cadet.capid);
-      if (existing) {
-        existing.name = cadet.name; existing.grade = cadet.grade; existing.updated_at = new Date().toISOString();
-      } else {
-        existing = { id: nextNumericId(rows), ...cadet, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-        rows.push(existing);
-      }
-      saveLS(LS.cadets, rows);
-      return existing;
+      if (existing) Object.assign(existing, cadet, { updated_at: new Date().toISOString() });
+      else { existing = { id: nextNumericId(rows), ...cadet, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; rows.push(existing); }
+      saveLS(LS.cadets, rows); return existing;
     }
     if (offlineStore) return offlineStore.upsertLocalCadet(cadet);
     const { data, error } = await sb.from('cadets').upsert(cadet, { onConflict: 'capid' }).select().single();
-    if (error) throw error;
-    return data;
+    if (error) throw error; return data;
   }
 
   async function insertInspection(row) {
@@ -947,21 +1195,17 @@
 
   async function listInspections() {
     if (isDemo) {
-      const cadets = loadLS(LS.cadets, []);
-      return loadLS(LS.inspections, []).map(i => ({ ...i, cadets: cadets.find(c => String(c.id) === String(i.cadet_id)) || null }));
+      const cadets = loadLS(LS.cadets, []).map(normalizeCadet);
+      const units = loadLS(LS.units, []);
+      return loadLS(LS.inspections, []).map(i => ({ ...i, cadets: cadets.find(c => String(c.id) === String(i.cadet_id)) || null, units: units.find(u => String(u.id) === String(i.unit_id)) || null }));
     }
-    if (navigator.onLine) {
+    if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true });
+        const { data, error } = await sb.from('inspections').select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').order('inspection_date', { ascending: true });
         if (error) throw error;
-        if (offlineStore) {
-          await offlineStore.cacheServerInspections(data || []);
-          return await offlineStore.getInspections();
-        }
+        if (offlineStore) { await offlineStore.cacheServerInspections(data || []); return await offlineStore.getInspections(); }
         return data || [];
-      } catch (err) {
-        console.warn('Inspection history server read failed; using tablet cache.', err);
-      }
+      } catch (err) { console.warn('Inspection history server read failed; using tablet cache.', err); }
     }
     return offlineStore ? await offlineStore.getInspections() : [];
   }
@@ -1011,108 +1255,73 @@
   async function syncPendingInspections({ showToast = false, refreshAfter = true } = {}) {
     if (isDemo || !offlineStore || !sb) return { synced: 0, failed: 0, pending: 0 };
     if (syncInProgress) return { synced: 0, failed: 0, pending: await getPendingCount() };
-    if (!navigator.onLine) {
-      await updateSyncStatus();
-      if (showToast) toast('Offline — records remain safely stored on this tablet');
-      return { synced: 0, failed: 0, pending: await getPendingCount() };
-    }
-
+    if (!navigator.onLine) { await updateSyncStatus(); if (showToast) toast('Offline — records remain safely stored on this tablet'); return { synced: 0, failed: 0, pending: await getPendingCount() }; }
     const { data: sessionData } = await sb.auth.getSession();
-    if (!sessionData?.session?.user) {
-      await updateSyncStatus('signin');
-      if (showToast) toast('Sign in online before synchronizing');
-      return { synced: 0, failed: 0, pending: await getPendingCount() };
-    }
+    if (!sessionData?.session?.user) { await updateSyncStatus('signin'); if (showToast) toast('Sign in online before synchronizing'); return { synced: 0, failed: 0, pending: await getPendingCount() }; }
 
-    syncInProgress = true;
-    await updateSyncStatus('syncing');
-    let synced = 0;
-    let failed = 0;
+    syncInProgress = true; await updateSyncStatus('syncing');
+    let synced = 0, failed = 0;
     try {
       const pendingRows = await offlineStore.getPendingInspections();
       for (const localRow of pendingRows) {
         try {
-          const cadetPayload = { capid: localRow.capid, name: localRow.cadet_name, grade: localRow.cadet_grade };
+          const legacy = splitLegacyName(localRow.cadet_name);
+          const first_name = localRow.cadet_first_name || localRow.cadets?.first_name || legacy.first_name;
+          const last_name = localRow.cadet_last_name || localRow.cadets?.last_name || legacy.last_name;
+          const currentUnit = localRow.unit_id ?? localRow.cadets?.current_unit_id ?? null;
+          const cadetPayload = { capid: localRow.capid, first_name, last_name, name: `${first_name} ${last_name}`.trim() || localRow.cadet_name || localRow.capid, grade: localRow.cadet_grade, current_unit_id: currentUnit };
           const { data: cadet, error: cadetError } = await sb.from('cadets').upsert(cadetPayload, { onConflict: 'capid' }).select().single();
           if (cadetError) throw cadetError;
-
           const payload = {
-            client_uuid: localRow.client_uuid,
-            cadet_id: cadet.id,
-            inspection_date: localRow.inspection_date,
-            grade_at_inspection: localRow.grade_at_inspection,
-            grade_group: localRow.grade_group,
-            personal_appearance: Number(localRow.personal_appearance),
-            garments: Number(localRow.garments),
-            accoutrements: Number(localRow.accoutrements),
-            footwear: Number(localRow.footwear),
-            military_bearing: Number(localRow.military_bearing),
-            notes: localRow.notes || null,
-            evaluator_id: localRow.evaluator_id
+            client_uuid: localRow.client_uuid, cadet_id: cadet.id, unit_id: localRow.unit_id ?? null,
+            inspection_date: localRow.inspection_date, grade_at_inspection: localRow.grade_at_inspection, grade_group: localRow.grade_group,
+            personal_appearance: Number(localRow.personal_appearance), garments: Number(localRow.garments), accoutrements: Number(localRow.accoutrements), footwear: Number(localRow.footwear), military_bearing: Number(localRow.military_bearing),
+            notes: localRow.notes || null, evaluator_id: localRow.evaluator_id
           };
-
           const { data: serverRow, error: inspectionError } = await sb.from('inspections')
             .upsert(payload, { onConflict: 'client_uuid' })
-            .select('*, cadets(capid,name,grade)')
-            .single();
+            .select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').single();
           if (inspectionError) throw inspectionError;
-
-          await offlineStore.markInspectionSynced(localRow.local_id, serverRow, cadet);
-          synced++;
+          await offlineStore.markInspectionSynced(localRow.local_id, serverRow, cadet); synced++;
         } catch (err) {
-          failed++;
-          await offlineStore.markInspectionError(localRow.local_id, err.message || String(err)).catch(() => {});
-          console.warn('Inspection sync failed:', err);
+          failed++; await offlineStore.markInspectionError(localRow.local_id, err.message || String(err)).catch(() => {}); console.warn('Inspection sync failed:', err);
           if (/jwt|auth|session|401|403/i.test(String(err.message || err))) break;
         }
       }
-
-      if (!failed) await offlineStore.noteSyncSuccess();
-      else await offlineStore.noteSyncError(`${failed} inspection${failed === 1 ? '' : 's'} could not synchronize.`);
-
+      if (!failed) await offlineStore.noteSyncSuccess(); else await offlineStore.noteSyncError(`${failed} inspection${failed === 1 ? '' : 's'} could not synchronize.`);
       if (refreshAfter && navigator.onLine) await refreshOfflineCacheFromServer({ quiet: true });
-      const pending = await getPendingCount();
-      if (showToast) toast(pending ? `${synced} synced · ${pending} still pending` : 'All inspections synchronized');
+      const pending = await getPendingCount(); if (showToast) toast(pending ? `${synced} synced · ${pending} still pending` : 'All inspections synchronized');
       return { synced, failed, pending };
-    } finally {
-      syncInProgress = false;
-      await updateSyncStatus();
-    }
+    } finally { syncInProgress = false; await updateSyncStatus(); }
   }
 
   async function refreshOfflineCacheFromServer({ quiet = false } = {}) {
     if (isDemo || !offlineStore || !sb) return;
-    if (!navigator.onLine) {
-      if (!quiet) toast('Offline — cannot refresh server data');
-      return;
-    }
+    if (!navigator.onLine) { if (!quiet) toast('Offline — cannot refresh server data'); return; }
     try {
-      const [cadetsResult, inspectionsResult, rulesResult] = await Promise.all([
-        sb.from('cadets').select('*').order('name'),
-        sb.from('inspections').select('*, cadets(capid,name,grade)').order('inspection_date', { ascending: true }),
-        sb.from('grading_rules').select('grade_group,passing_min,excellent_min')
+      const [cadetsResult, inspectionsResult, rulesResult, unitsResult, inspectorsResult] = await Promise.all([
+        sb.from('cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }),
+        sb.from('inspections').select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').order('inspection_date', { ascending: true }),
+        sb.from('grading_rules').select('grade_group,passing_min,excellent_min'),
+        sb.from('units').select('*').order('charter_number'),
+        sb.rpc('list_inspectors')
       ]);
-      if (cadetsResult.error) throw cadetsResult.error;
-      if (inspectionsResult.error) throw inspectionsResult.error;
-      if (rulesResult.error) throw rulesResult.error;
+      for (const result of [cadetsResult, inspectionsResult, rulesResult, unitsResult, inspectorsResult]) if (result.error) throw result.error;
       await offlineStore.cacheCadets(cadetsResult.data || []);
       await offlineStore.cacheServerInspections(inspectionsResult.data || []);
+      await offlineStore.cacheUnits(unitsResult.data || []);
+      await offlineStore.cacheInspectorDirectory(inspectorsResult.data || []);
+      unitsCache = unitsResult.data || [];
+      inspectorDirectory = inspectorsResult.data || [];
       const rules = cloneDefaultRules();
       (rulesResult.data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
-      gradingRules = rules;
-      await offlineStore.cacheGradingRules(rules);
-      await offlineStore.markServerRefresh();
-      updateGradingRuleForm();
-      updateLiveScore();
-      refreshAllBulkRows();
+      gradingRules = rules; await offlineStore.cacheGradingRules(rules); await offlineStore.markServerRefresh();
+      populateUnitSelectors(); updateGradingRuleForm(); updateLiveScore(); refreshAllBulkRows();
       if (currentProfile) await refreshCadetSelectors();
+      if (currentProfile?.role === 'admin') await refreshUnitsAdmin();
       if (!quiet) toast('Offline tablet data refreshed');
-    } catch (err) {
-      console.warn('Offline cache refresh failed:', err);
-      if (!quiet) toast(`Refresh failed: ${err.message || err}`);
-    } finally {
-      await updateSyncStatus();
-    }
+    } catch (err) { console.warn('Offline cache refresh failed:', err); if (!quiet) toast(`Refresh failed: ${err.message || err}`); }
+    finally { await updateSyncStatus(); }
   }
 
   async function updateSyncStatus(forcedState = '') {
@@ -1223,6 +1432,13 @@
       password_hash: await hashPassword('CAPinspect2026!'), created_at: new Date().toISOString()
     });
     saveLS(LS.users, users);
+  }
+
+  async function ensureDemoUnit() {
+    const units = loadLS(LS.units, []);
+    if (units.length) return;
+    units.push({ id: 1, charter_number: 'DEMO-001', name: 'Demo Composite Squadron', active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    saveLS(LS.units, units);
   }
 
   function makeUUID() {
