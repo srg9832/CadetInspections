@@ -1,3 +1,9 @@
+> **Production architecture update — October 2026**
+>
+> Uniform Inspections now uses the shared **CAP Applications** Supabase backend (project ref `vosvdkkuiijywwmqzdiu`) with CAP Schedule, Leadership Feedback, and Drill Test Manager. Cadets and units come from the shared `members`, `member_unit_assignments`, and `units` tables. Do **not** create a separate Supabase project for this application. The former standalone Uniform Inspections project is retained only as a rollback/archive copy.
+>
+> Uniform-specific production objects are prefixed `uniform_`, including `uniform_inspections`, `uniform_grading_rules`, and Uniform permission tables. New/authorized users are managed through the shared `uniform-admin-users` Edge Function.
+
 # CAP Uniform Inspection Tracker
 
 A GitHub-Pages-ready uniform inspection form and reporting dashboard for Civil Air Patrol cadets.
@@ -44,13 +50,13 @@ A GitHub-Pages-ready uniform inspection form and reporting dashboard for Civil A
 | 5-7 | Satisfactory | Yes |
 | 8-10 | Excellent | Yes |
 
-The browser displays the result live. Administrators can change the passing and Excellent thresholds from the Administration tab. In Supabase mode, those thresholds are stored in `grading_rules`, and the database trigger independently recalculates the total, rating, and pass/fail before saving.
+The browser displays the result live. Administrators can change the passing and Excellent thresholds from the Administration tab. In Supabase mode, those thresholds are stored in `uniform_grading_rules`, and the database trigger independently recalculates the total, rating, and pass/fail before saving.
 
 ---
 
 # Fastest test: Demo mode
 
-The project ships in demo mode. No server or database setup is necessary.
+The project supports demo mode, but the production site is configured for the shared CAP Applications Supabase backend.
 
 Default demo credentials:
 
@@ -63,9 +69,9 @@ You can test by opening `index.html`, or publish the folder to GitHub Pages as-i
 
 ---
 
-# Shared database setup: Supabase
+# Legacy standalone Supabase setup — DO NOT USE
 
-Use this when you want multiple evaluators/devices to share the same inspections. **You do not need to manually build the schema in the Supabase Table Editor.**
+This section describes the retired standalone architecture and is retained only for historical context. Production now uses the shared CAP Applications backend described above.
 
 ## Automated setup (recommended on Windows)
 
@@ -81,7 +87,7 @@ The setup program automatically:
 - initializes the local Supabase CLI configuration if needed;
 - applies every SQL migration in `supabase/migrations/`;
 - creates the tables, triggers, RLS policies, indexes, and default grading rules;
-- deploys the protected `create-user` Edge Function; and
+- deploys the shared `uniform-admin-users` Edge Function; and
 - writes `config.js` so the web app uses the shared Supabase database.
 
 Supabase's migration system records which migrations have already run, so later schema updates can be added as new migration files and applied with `supabase db push` instead of rebuilding the database.
@@ -101,7 +107,7 @@ npx supabase init
 npx supabase login
 npx supabase link --project-ref YOUR_PROJECT_REF
 npx supabase db push
-npx supabase functions deploy create-user
+Do not deploy the retired standalone create-user function
 ```
 
 Then edit `config.js` with your Project URL and Publishable key. Never place the service-role/secret key in `config.js` or `index.html`.
