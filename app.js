@@ -18,6 +18,37 @@
   let deferredInstallPrompt = null;
   let offlineSession = false;
 
+  // Legacy Uniform Inspections used numeric unit IDs. Preserve this mapping so
+  // already-installed tablets can synchronize any queued records after cutover.
+  const LEGACY_UNIT_CHARTERS = { '1': 'MT-012' };
+  const normalizeCharter = value => String(value || '').replace(/^RMR-/i, '').toUpperCase();
+  const isUUID = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+  function resolveSharedUnitId(value) {
+    if (!value) return null;
+    const raw = String(value);
+    if (isUUID(raw)) return raw;
+    const charter = LEGACY_UNIT_CHARTERS[raw];
+    if (!charter) return null;
+    return unitsCache.find(u => normalizeCharter(u.charter_number) === normalizeCharter(charter))?.id || null;
+  }
+  function normalizeSharedInspection(row = {}) {
+    const member = row.members || {};
+    return {
+      ...row,
+      cadet_id: row.member_id,
+      evaluator_id: row.evaluator_user_id,
+      cadets: {
+        id: member.id || row.member_id,
+        capid: member.capid || '',
+        first_name: member.first_name || '',
+        last_name: member.last_name || '',
+        name: `${member.first_name || ''} ${member.last_name || ''}`.trim(),
+        grade: member.current_grade || row.grade_at_inspection || '',
+        current_unit_id: null
+      }
+    };
+  }
+
   const GRADES = [
     { value: 'C/AB', label: 'C/AB — Cadet Airman Basic', group: 'airman' },
     { value: 'C/Amn', label: 'C/Amn — Cadet Airman', group: 'airman' },
@@ -336,8 +367,9 @@
   }
 
   async function loadSupabaseProfile(id) {
-    const { data, error } = await sb.from('profiles').select('*').eq('id', id).single();
-    if (error) throw new Error(`Signed in, but no authorized profile was found: ${error.message}`);
+    const { data, error } = await sb.rpc('uniform_my_profile').single();
+    if (error) throw new Error(`Signed in, but this shared CAP account is not authorized for Uniform Inspections: ${error.message}`);
+    if (!data || data.id !== id) throw new Error('Signed in, but this shared CAP account is not authorized for Uniform Inspections.');
     return data;
   }
 
@@ -554,8 +586,8 @@
     let saved = 0;
     try {
       for (const { row } of ready) {
-        await saveInspectionLocalFirst({ capid: row.capid, first_name: row.first_name, last_name: row.last_name, name: row.name, grade: row.grade, current_unit_id: Number(unitId) }, {
-          unit_id: Number(unitId), inspection_date: date, grade_at_inspection: row.grade, grade_group: row.group,
+        await saveInspectionLocalFirst({ capid: row.capid, first_name: row.first_name, last_name: row.last_name, name: row.name, grade: row.grade, current_unit_id: unitId }, {
+          unit_id: unitId, inspection_date: date, grade_at_inspection: row.grade, grade_group: row.group,
           ...row.scores, notes: null, evaluator_id: currentProfile.id, total_score: row.total,
           overall_rating: row.result.rating, passed: row.result.passed
         });
@@ -592,7 +624,7 @@
     if (isDemo) return loadDemoGradingRules();
     if (navigator.onLine) {
       try {
-        const { data, error } = await sb.from('grading_rules').select('grade_group,passing_min,excellent_min');
+        const { data, error } = await sb.from('uniform_grading_rules').select('grade_group,passing_min,excellent_min');
         if (error) throw error;
         const rules = cloneDefaultRules();
         (data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
@@ -652,7 +684,7 @@
         saveLS(LS.gradingRules, candidate);
       } else {
         const rows = Object.entries(candidate).map(([grade_group, r]) => ({ grade_group, passing_min: r.passing_min, excellent_min: r.excellent_min, updated_by: currentProfile.id, updated_at: new Date().toISOString() }));
-        const { error } = await sb.from('grading_rules').upsert(rows, { onConflict: 'grade_group' });
+        const { error } = await sb.from('uniform_grading_rules').upsert(rows, { onConflict: 'grade_group' });
         if (error) throw error;
         if (offlineStore) await offlineStore.cacheGradingRules(candidate).catch(console.warn);
       }
@@ -711,8 +743,8 @@
     button.textContent = 'Saving to tablet...';
 
     try {
-      await saveInspectionLocalFirst({ capid, first_name, last_name, name, grade, current_unit_id: Number(unitId) }, {
-        unit_id: Number(unitId), inspection_date: date, grade_at_inspection: grade, grade_group: group,
+      await saveInspectionLocalFirst({ capid, first_name, last_name, name, grade, current_unit_id: unitId }, {
+        unit_id: unitId, inspection_date: date, grade_at_inspection: grade, grade_group: group,
         ...scores, notes: $('notes').value.trim() || null, evaluator_id: currentProfile.id,
         total_score: total, overall_rating: result.rating, passed: result.passed
       });
@@ -889,12 +921,12 @@
     if (isDemo) return loadLS(LS.units, []);
     if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.from('units').select('*').order('charter_number');
+        const { data, error } = await sb.rpc('uniform_list_units');
         if (error) throw error;
         unitsCache = data || [];
         if (offlineStore) await offlineStore.cacheUnits(unitsCache);
         return unitsCache;
-      } catch (err) { console.warn('Unit server read failed; using tablet cache.', err); }
+      } catch (err) { console.warn('Shared unit server read failed; using tablet cache.', err); }
     }
     return offlineStore ? await offlineStore.getUnits() : unitsCache;
   }
@@ -903,7 +935,7 @@
     if (isDemo) return loadLS(LS.users, []).map(u => ({ id: u.id, display_name: u.display_name }));
     if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.rpc('list_inspectors');
+        const { data, error } = await sb.rpc('uniform_list_inspectors');
         if (error) throw error;
         inspectorDirectory = data || [];
         if (offlineStore) await offlineStore.cacheInspectorDirectory(inspectorDirectory);
@@ -918,7 +950,7 @@
     const prior = {};
     ['inspectionUnit','bulkUnit','historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter','legacyUnitSelect'].forEach(id => { if ($(id)) prior[id] = $(id).value; });
     const activeOptions = unitsCache.map(u => `<option value="${u.id}" ${u.active === false ? 'disabled' : ''}>${escapeHtml(unitOptionLabel(u))}</option>`).join('');
-    ['inspectionUnit','bulkUnit','legacyUnitSelect'].forEach(id => { if ($(id)) $(id).innerHTML = '<option value="">Select unit...</option>' + activeOptions; });
+    ['inspectionUnit','bulkUnit','legacyUnitSelect','newUserUnit'].forEach(id => { if ($(id)) $(id).innerHTML = '<option value="">Select unit...</option>' + activeOptions; });
     const reportOptions = '<option value="all">All Units</option><option value="unassigned">Unassigned / Legacy</option>' + unitsCache.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
     ['historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter'].forEach(id => { if ($(id)) $(id).innerHTML = reportOptions; });
     Object.entries(prior).forEach(([id, value]) => { if ($(id) && [...$(id).options].some(o => o.value === value)) $(id).value = value; });
@@ -926,6 +958,7 @@
     if (active.length === 1) {
       if (!$('inspectionUnit').value) $('inspectionUnit').value = String(active[0].id);
       if (!$('bulkUnit').value) $('bulkUnit').value = String(active[0].id);
+      if ($('newUserUnit') && !$('newUserUnit').value) $('newUserUnit').value = String(active[0].id);
     }
   }
 
@@ -1041,30 +1074,12 @@
   async function refreshUnitsAdmin() {
     if (currentProfile?.role !== 'admin') return;
     try { unitsCache = await listUnits(); populateUnitSelectors(); } catch (err) { console.warn(err); }
-    $('unitsTableBody').innerHTML = unitsCache.map(u => `<tr><td>${escapeHtml(u.charter_number)}</td><td>${escapeHtml(u.name)}</td><td class="${u.active === false ? 'unit-status-inactive' : 'unit-status-active'}">${u.active === false ? 'Inactive' : 'Active'}</td><td><button class="secondary small-action edit-unit-btn" type="button" data-id="${u.id}">Edit</button></td></tr>`).join('') || '<tr><td colspan="4">No units configured yet.</td></tr>';
-    document.querySelectorAll('.edit-unit-btn').forEach(btn => btn.addEventListener('click', () => editUnit(btn.dataset.id)));
-    await updateLegacyCount();
+    $('unitsTableBody').innerHTML = unitsCache.map(u => `<tr><td>${escapeHtml(u.charter_number || '')}</td><td>${escapeHtml(u.name)}</td><td class="${u.active === false ? 'unit-status-inactive' : 'unit-status-active'}">${u.active === false ? 'Inactive' : 'Active'}</td><td>Shared CAP directory</td></tr>`).join('') || '<tr><td colspan="4">No authorized units configured.</td></tr>';
   }
 
   async function handleSaveUnit(e) {
     e.preventDefault();
-    if (currentProfile?.role !== 'admin') return;
-    const payload = { charter_number: $('unitCharterNumber').value.trim().toUpperCase(), name: $('unitName').value.trim(), active: $('unitActive').checked };
-    if (!payload.charter_number || !payload.name) return;
-    if (!isDemo && !navigator.onLine) return setMessage('unitMessage', 'Unit changes require an internet connection.', 'error');
-    try {
-      const editId = $('editUnitId').value;
-      if (isDemo) {
-        const rows = loadLS(LS.units, []);
-        if (editId) Object.assign(rows.find(u => String(u.id) === String(editId)), payload, { updated_at: new Date().toISOString() });
-        else rows.push({ id: nextNumericId(rows), ...payload, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
-        saveLS(LS.units, rows);
-      } else {
-        const query = editId ? sb.from('units').update(payload).eq('id', editId) : sb.from('units').insert(payload);
-        const { error } = await query; if (error) throw error;
-      }
-      setMessage('unitMessage', editId ? 'Unit updated.' : 'Unit added.', 'success'); resetUnitForm(); await refreshUnitsAdmin(); await refreshCadetSelectors();
-    } catch (err) { setMessage('unitMessage', err.message || String(err), 'error'); }
+    setMessage('unitMessage', 'Units are managed in the shared CAP Applications backend.', 'error');
   }
   function editUnit(id) { const u=unitsCache.find(x=>String(x.id)===String(id)); if(!u)return; $('editUnitId').value=u.id; $('unitCharterNumber').value=u.charter_number; $('unitName').value=u.name; $('unitActive').checked=u.active!==false; $('cancelUnitEditBtn').classList.remove('hidden'); $('unitCharterNumber').focus(); }
   function resetUnitForm() { $('editUnitId').value=''; $('unitCharterNumber').value=''; $('unitName').value=''; $('unitActive').checked=true; $('cancelUnitEditBtn').classList.add('hidden'); }
@@ -1075,20 +1090,7 @@
     $('assignLegacyBtn').disabled = !(c || i) || !unitsCache.length;
   }
   async function assignLegacyRecords() {
-    const unitId = $('legacyUnitSelect').value; if(!unitId) return setMessage('unitMessage','Select a destination unit first.','error');
-    if (!confirm('Assign every currently unassigned cadet and historical inspection to this unit?')) return;
-    if (!isDemo && !navigator.onLine) return setMessage('unitMessage','This operation requires an internet connection.','error');
-    try {
-      if (isDemo) {
-        const cadets=loadLS(LS.cadets,[]); cadets.forEach(c=>{if(!c.current_unit_id)c.current_unit_id=Number(unitId)}); saveLS(LS.cadets,cadets);
-        const inspections=loadLS(LS.inspections,[]); inspections.forEach(i=>{if(!i.unit_id)i.unit_id=Number(unitId)}); saveLS(LS.inspections,inspections);
-      } else {
-        const { data, error } = await sb.rpc('assign_unassigned_records',{p_unit_id:Number(unitId)}); if(error)throw error;
-        toast(`Assigned ${data?.cadets||0} cadets and ${data?.inspections||0} inspections`);
-        await refreshOfflineCacheFromServer({quiet:true});
-      }
-      setMessage('unitMessage','Unassigned records were assigned successfully.','success'); await refreshUnitsAdmin(); await refreshCadetSelectors();
-    } catch(err){ setMessage('unitMessage',err.message||String(err),'error'); }
+    setMessage('unitMessage','Legacy unit assignment is no longer needed after the shared-backend migration.','success');
   }
 
   async function refreshUsers() {
@@ -1108,12 +1110,13 @@
       display_name: $('newUserName').value.trim(),
       email: $('newUserEmail').value.trim().toLowerCase(),
       password: $('newUserPassword').value,
-      role: $('newUserRole').value
+      role: $('newUserRole').value,
+      unit_id: $('newUserUnit')?.value || null
     };
     setMessage('userMessage', '', '');
     try {
       await createUser(payload);
-      setMessage('userMessage', `Created ${payload.email}.`, 'success');
+      setMessage('userMessage', `Authorized ${payload.email} for Uniform Inspections.`, 'success');
       $('createUserForm').reset();
       await refreshUsers();
     } catch (err) {
@@ -1160,11 +1163,11 @@
     if (isDemo) return loadLS(LS.cadets, []).map(normalizeCadet);
     if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.from('cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }).order('first_name', { ascending: true, nullsFirst: false });
+        const { data, error } = await sb.from('uniform_cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }).order('first_name', { ascending: true, nullsFirst: false });
         if (error) throw error;
         if (offlineStore) { await offlineStore.cacheCadets(data || []); return (await offlineStore.getCadets()).map(normalizeCadet); }
         return (data || []).map(normalizeCadet);
-      } catch (err) { console.warn('Cadet roster server read failed; using tablet cache.', err); }
+      } catch (err) { console.warn('Shared cadet roster read failed; using tablet cache.', err); }
     }
     return offlineStore ? (await offlineStore.getCadets()).map(normalizeCadet) : [];
   }
@@ -1179,8 +1182,17 @@
       saveLS(LS.cadets, rows); return existing;
     }
     if (offlineStore) return offlineStore.upsertLocalCadet(cadet);
-    const { data, error } = await sb.from('cadets').upsert(cadet, { onConflict: 'capid' }).select().single();
-    if (error) throw error; return data;
+    const unitId = resolveSharedUnitId(cadet.current_unit_id);
+    if (!unitId) throw new Error('Choose a shared CAP unit before saving this cadet.');
+    const { data, error } = await sb.rpc('uniform_upsert_cadet', {
+      p_capid: cadet.capid,
+      p_first_name: cadet.first_name || '',
+      p_last_name: cadet.last_name || '',
+      p_grade: cadet.grade || null,
+      p_unit_id: unitId
+    }).single();
+    if (error) throw error;
+    return data;
   }
 
   async function insertInspection(row) {
@@ -1201,10 +1213,13 @@
     }
     if (navigator.onLine && sb) {
       try {
-        const { data, error } = await sb.from('inspections').select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').order('inspection_date', { ascending: true });
+        const { data, error } = await sb.from('uniform_inspections')
+          .select('*, members(id,capid,first_name,last_name,current_grade), units(id,charter_number,name,active)')
+          .order('inspection_date', { ascending: true });
         if (error) throw error;
-        if (offlineStore) { await offlineStore.cacheServerInspections(data || []); return await offlineStore.getInspections(); }
-        return data || [];
+        const normalized = (data || []).map(normalizeSharedInspection);
+        if (offlineStore) { await offlineStore.cacheServerInspections(normalized); return await offlineStore.getInspections(); }
+        return normalized;
       } catch (err) { console.warn('Inspection history server read failed; using tablet cache.', err); }
     }
     return offlineStore ? await offlineStore.getInspections() : [];
@@ -1212,7 +1227,7 @@
 
   async function listProfiles() {
     if (isDemo) return loadLS(LS.users, []).map(stripPassword).sort((a,b) => (a.display_name || '').localeCompare(b.display_name || ''));
-    const { data, error } = await sb.from('profiles').select('*').order('display_name');
+    const { data, error } = await sb.rpc('uniform_list_users');
     if (error) throw error;
     return data || [];
   }
@@ -1226,7 +1241,7 @@
       return;
     }
     if (!navigator.onLine) throw new Error('Creating users requires an internet connection.');
-    const { data, error } = await sb.functions.invoke('create-user', { body: payload });
+    const { data, error } = await sb.functions.invoke('uniform-admin-users', { body: payload });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
   }
@@ -1268,20 +1283,30 @@
           const legacy = splitLegacyName(localRow.cadet_name);
           const first_name = localRow.cadet_first_name || localRow.cadets?.first_name || legacy.first_name;
           const last_name = localRow.cadet_last_name || localRow.cadets?.last_name || legacy.last_name;
-          const currentUnit = localRow.unit_id ?? localRow.cadets?.current_unit_id ?? null;
-          const cadetPayload = { capid: localRow.capid, first_name, last_name, name: `${first_name} ${last_name}`.trim() || localRow.cadet_name || localRow.capid, grade: localRow.cadet_grade, current_unit_id: currentUnit };
-          const { data: cadet, error: cadetError } = await sb.from('cadets').upsert(cadetPayload, { onConflict: 'capid' }).select().single();
-          if (cadetError) throw cadetError;
+          const rawUnit = localRow.unit_id ?? localRow.cadets?.current_unit_id ?? null;
+          const unitId = resolveSharedUnitId(rawUnit);
+          if (!unitId) throw new Error('Could not map the queued inspection to a shared CAP unit.');
           const payload = {
-            client_uuid: localRow.client_uuid, cadet_id: cadet.id, unit_id: localRow.unit_id ?? null,
-            inspection_date: localRow.inspection_date, grade_at_inspection: localRow.grade_at_inspection, grade_group: localRow.grade_group,
-            personal_appearance: Number(localRow.personal_appearance), garments: Number(localRow.garments), accoutrements: Number(localRow.accoutrements), footwear: Number(localRow.footwear), military_bearing: Number(localRow.military_bearing),
-            notes: localRow.notes || null, evaluator_id: localRow.evaluator_id
+            client_uuid: localRow.client_uuid,
+            capid: localRow.capid,
+            first_name,
+            last_name,
+            grade: localRow.cadet_grade,
+            unit_id: unitId,
+            inspection_date: localRow.inspection_date,
+            grade_at_inspection: localRow.grade_at_inspection,
+            grade_group: localRow.grade_group,
+            personal_appearance: Number(localRow.personal_appearance),
+            garments: Number(localRow.garments),
+            accoutrements: Number(localRow.accoutrements),
+            footwear: Number(localRow.footwear),
+            military_bearing: Number(localRow.military_bearing),
+            notes: localRow.notes || null
           };
-          const { data: serverRow, error: inspectionError } = await sb.from('inspections')
-            .upsert(payload, { onConflict: 'client_uuid' })
-            .select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').single();
-          if (inspectionError) throw inspectionError;
+          const { data: saved, error: saveError } = await sb.rpc('uniform_save_inspection', { p_payload: payload });
+          if (saveError) throw saveError;
+          const serverRow = normalizeSharedInspection(saved.inspection || {});
+          const cadet = saved.cadet || serverRow.cadets;
           await offlineStore.markInspectionSynced(localRow.local_id, serverRow, cadet); synced++;
         } catch (err) {
           failed++; await offlineStore.markInspectionError(localRow.local_id, err.message || String(err)).catch(() => {}); console.warn('Inspection sync failed:', err);
@@ -1300,13 +1325,14 @@
     if (!navigator.onLine) { if (!quiet) toast('Offline — cannot refresh server data'); return; }
     try {
       const [cadetsResult, inspectionsResult, rulesResult, unitsResult, inspectorsResult] = await Promise.all([
-        sb.from('cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }),
-        sb.from('inspections').select('*, cadets(capid,first_name,last_name,name,grade,current_unit_id), units(id,charter_number,name,active)').order('inspection_date', { ascending: true }),
-        sb.from('grading_rules').select('grade_group,passing_min,excellent_min'),
-        sb.from('units').select('*').order('charter_number'),
-        sb.rpc('list_inspectors')
+        sb.from('uniform_cadets').select('*').order('last_name', { ascending: true, nullsFirst: false }),
+        sb.from('uniform_inspections').select('*, members(id,capid,first_name,last_name,current_grade), units(id,charter_number,name,active)').order('inspection_date', { ascending: true }),
+        sb.from('uniform_grading_rules').select('grade_group,passing_min,excellent_min'),
+        sb.rpc('uniform_list_units'),
+        sb.rpc('uniform_list_inspectors')
       ]);
       for (const result of [cadetsResult, inspectionsResult, rulesResult, unitsResult, inspectorsResult]) if (result.error) throw result.error;
+      inspectionsResult.data = (inspectionsResult.data || []).map(normalizeSharedInspection);
       await offlineStore.cacheCadets(cadetsResult.data || []);
       await offlineStore.cacheServerInspections(inspectionsResult.data || []);
       await offlineStore.cacheUnits(unitsResult.data || []);
