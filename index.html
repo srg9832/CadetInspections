@@ -843,7 +843,7 @@ tbody tr:hover { background: #fafcfd; }
           </section>
 
           <section class="unit-admin-grid">
-            <form id="unitForm" class="app-panel stack">
+            <form id="unitForm" class="app-panel stack hidden">
               <div class="panel-heading"><div><h2>Unit Management</h2><p>Add and maintain CAP units used by entry screens and reports.</p></div></div>
               <input id="editUnitId" type="hidden" />
               <label class="field"><span>Charter Number *</span><input id="unitCharterNumber" required placeholder="MT-007" /></label>
@@ -861,9 +861,9 @@ tbody tr:hover { background: #fafcfd; }
               </div>
             </form>
             <div class="app-panel">
-              <div class="panel-heading"><div><h2>Configured Units</h2><p>Inactive units remain available in historical reports but are marked inactive.</p></div></div>
+              <div class="panel-heading"><div><h2>Shared CAP Unit Directory</h2><p>Units come from the shared CAP Applications backend. Manage the unit once and every connected CAP app uses the same record.</p></div></div>
               <div class="table-wrap"><table>
-                <thead><tr><th>Charter</th><th>Unit Name</th><th>Status</th><th></th></tr></thead>
+                <thead><tr><th>Charter</th><th>Unit Name</th><th>Status</th><th>Source</th></tr></thead>
                 <tbody id="unitsTableBody"></tbody>
               </table></div>
             </div>
@@ -903,10 +903,10 @@ tbody tr:hover { background: #fafcfd; }
 
           <div class="admin-grid">
             <form id="createUserForm" class="app-panel stack">
-              <div class="panel-heading"><div><h2>Add User</h2><p>Create an inspector or administrator account.</p></div></div>
+              <div class="panel-heading"><div><h2>Add / Authorize User</h2><p>Authorize an existing shared CAP account or create a new one for Uniform Inspections.</p></div></div>
               <label class="field"><span>Display Name</span><input id="newUserName" required /></label>
               <label class="field"><span>Email</span><input id="newUserEmail" type="email" required /></label>
-              <label class="field"><span>Temporary Password</span><input id="newUserPassword" type="password" minlength="8" required /></label>
+              <label class="field"><span>Temporary Password <small>(new shared accounts only)</small></span><input id="newUserPassword" type="password" minlength="8" /><small>Leave blank when authorizing an account that already exists in CAP Applications.</small></label>
               <label class="field">
                 <span>Role</span>
                 <select id="newUserRole">
@@ -914,6 +914,7 @@ tbody tr:hover { background: #fafcfd; }
                   <option value="admin">Administrator</option>
                 </select>
               </label>
+              <label class="field"><span>Inspector Unit</span><select id="newUserUnit"><option value="">Select unit...</option></select><small>Required for inspectors. App administrators can access all Uniform Inspection units.</small></label>
               <button class="primary" type="submit">Create User</button>
               <p id="userMessage" class="form-message"></p>
             </form>
