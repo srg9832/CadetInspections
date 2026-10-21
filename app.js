@@ -1372,7 +1372,7 @@
 
       return `<tr>
         <td><strong>${escapeHtml(u.display_name || '')}</strong></td>
-        <td>${escapeHtml(u.capid || 'Not linked')}</td>
+        <td>${escapeHtml(u.capid || 'Not set')}</td>
         <td>${escapeHtml(u.email || '')}</td>
         <td>${homeCell}</td>
         <td>${roleSelect}</td>
