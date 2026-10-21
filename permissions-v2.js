@@ -207,7 +207,7 @@
           <div class="panel-heading">
             <div>
               <h2 id="newUserFormTitle">Add / Authorize User</h2>
-              <p id="newUserFormHelp">Check CAPID or email first. Shared login accounts are separate from the inspection/member roster.</p>
+              <p id="newUserFormHelp">Enter a CAPID first. Existing shared login accounts are found automatically; otherwise complete the blank fields to create a new login.</p>
             </div>
           </div>
 
@@ -217,7 +217,7 @@
             <label class="field">
               <span>CAPID <small>(optional)</small></span>
               <input id="newUserCapid" inputmode="numeric" maxlength="12" placeholder="123456" />
-              <small>Used only to identify this shared login account. It does not link the login to inspection/member records.</small>
+              <small>Enter the CAPID and the shared login account will be checked automatically. If found, the account fields fill in for you.</small>
             </label>
             <label class="field">
               <span>Email *</span>
@@ -245,7 +245,6 @@
           </div>
 
           <div class="admin-form-actions" style="justify-content:flex-start">
-            <button id="lookupMemberBtn" class="secondary" type="button">Check Existing Account</button>
             <button id="clearUserFormBtn" class="secondary" type="button">Clear</button>
           </div>
 
