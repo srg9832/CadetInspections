@@ -15,6 +15,7 @@
   let adminUsersCache = [];
   let adminUnitRolesCache = [];
   let newUserLookupResultData = null;
+  const adminInlineSaveChains = new Map();
   let workingUnitId = null;
   let bulkRowSerial = 0;
   const offlineStore = window.CAPOfflineStore || null;
@@ -1319,7 +1320,7 @@
     if ($('adminManagedUnitCaption')) {
       $('adminManagedUnitCaption').textContent = isApplicationAdmin()
         ? 'Application Admin: you can manage access for every unit.'
-        : 'Unit Admin: you can grant or remove Inspector access only for units you administer.';
+        : 'Unit Admin: you can manage Inspector and Unit Admin access for units you administer.';
     }
     updateNewUserRoleUI();
   }
@@ -1330,25 +1331,21 @@
     const unitId = $('adminManagedUnitFilter')?.value || '';
     const search = ($('adminUserSearch')?.value || '').trim().toLowerCase();
     if (!unitId) {
-      body.innerHTML = '<tr><td colspan="7">No unit is available for administration.</td></tr>';
+      body.innerHTML = '<tr><td colspan="6">No unit is available for administration.</td></tr>';
       return;
     }
 
     const callerIsAppAdmin = isApplicationAdmin();
-    let filtered = adminUsersCache.filter(u => {
+    const filtered = adminUsersCache.filter(u => {
       if (!callerIsAppAdmin && adminRoleFor(u.id, unitId) === 'none') return false;
       if (!search) return true;
-      return `${u.display_name || ''} ${u.email || ''} ${u.capid || ''}`.toLowerCase().includes(search);
+      return `${u.display_name || ''} ${u.first_name || ''} ${u.last_name || ''} ${u.email || ''} ${u.capid || ''}`.toLowerCase().includes(search);
     });
 
     body.innerHTML = filtered.map(u => {
       const role = adminRoleFor(u.id, unitId);
-      const targetIsUnitAdmin = role === 'unit_admin';
-      const canEditRole = callerIsAppAdmin || !targetIsUnitAdmin;
-      const roleOptions = callerIsAppAdmin
-        ? [['none','No Access'],['inspector','Inspector'],['unit_admin','Unit Admin']]
-        : (targetIsUnitAdmin ? [['unit_admin','Unit Admin']] : [['none','No Access'],['inspector','Inspector']]);
-      const roleSelect = `<select class="admin-unit-role" data-user-id="${u.id}" ${canEditRole ? '' : 'disabled'}>${roleOptions.map(([v,l]) => `<option value="${v}" ${v===role?'selected':''}>${l}</option>`).join('')}</select>`;
+      const roleOptions = [['none','No Access'],['inspector','Inspector'],['unit_admin','Unit Admin']];
+      const roleSelect = `<select class="admin-unit-role" data-user-id="${u.id}">${roleOptions.map(([v,l]) => `<option value="${v}" ${v===role?'selected':''}>${l}</option>`).join('')}</select>`;
 
       const homeUnit = unitsCache.find(x => String(x.id) === String(u.default_unit_id || ''));
       let homeCell = escapeHtml(homeUnit ? unitOptionLabel(homeUnit) : 'Not set');
@@ -1362,35 +1359,49 @@
         ? `<label class="permission-toggle"><input class="admin-app-admin-toggle" data-user-id="${u.id}" type="checkbox" ${u.is_app_admin?'checked':''}> <span>${u.is_app_admin?'Yes':'No'}</span></label>`
         : (u.is_app_admin ? '<span class="permission-badge app-admin">Application Admin</span>' : '—');
 
-      const roleAction = canEditRole
-        ? `<button class="secondary small-action admin-save-role" type="button" data-user-id="${u.id}">Apply Access</button>`
-        : '<span class="confidence-note">App Admin only</span>';
-      const identityAction = callerIsAppAdmin
-        ? `<button class="secondary small-action admin-edit-user" type="button" data-user-id="${u.id}">Edit Account</button>`
-        : '';
-      const action = `<div style="display:flex;gap:6px;flex-wrap:wrap">${roleAction}${identityAction}</div>`;
+      const nameCell = callerIsAppAdmin
+        ? `<div class="admin-inline-name">
+            <input class="admin-inline-input admin-identity-input" data-field="first_name" data-original="${escapeHtml(u.first_name || '')}" value="${escapeHtml(u.first_name || '')}" placeholder="First name" aria-label="First name">
+            <input class="admin-inline-input admin-identity-input" data-field="last_name" data-original="${escapeHtml(u.last_name || '')}" value="${escapeHtml(u.last_name || '')}" placeholder="Last name" aria-label="Last name">
+           </div><small class="admin-inline-caption admin-display-name">${escapeHtml(u.display_name || '')}</small>`
+        : `<strong>${escapeHtml(u.display_name || '')}</strong>`;
 
-      return `<tr>
-        <td><strong>${escapeHtml(u.display_name || '')}</strong></td>
-        <td>${escapeHtml(u.capid || 'Not set')}</td>
-        <td>${escapeHtml(u.email || '')}</td>
+      const capidCell = callerIsAppAdmin
+        ? `<input class="admin-inline-input admin-identity-input" data-field="capid" data-original="${escapeHtml(u.capid || '')}" value="${escapeHtml(u.capid || '')}" inputmode="numeric" maxlength="12" placeholder="Not set" aria-label="CAPID">`
+        : escapeHtml(u.capid || 'Not set');
+
+      const emailCell = callerIsAppAdmin
+        ? `<input class="admin-inline-input admin-identity-input" data-field="email" data-original="${escapeHtml(u.email || '')}" value="${escapeHtml(u.email || '')}" type="email" aria-label="Email">`
+        : escapeHtml(u.email || '');
+
+      return `<tr data-user-id="${u.id}">
+        <td>${nameCell}</td>
+        <td>${capidCell}</td>
+        <td>${emailCell}</td>
         <td>${homeCell}</td>
         <td>${roleSelect}</td>
         <td>${appAdminCell}</td>
-        <td>${action}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="7">${callerIsAppAdmin ? 'No users match this search.' : 'No Inspectors are assigned to this unit yet.'}</td></tr>`;
+    }).join('') || `<tr><td colspan="6">${callerIsAppAdmin ? 'No users match this search.' : 'No users are assigned to this unit yet.'}</td></tr>`;
 
-    body.querySelectorAll('.admin-save-role').forEach(btn => btn.addEventListener('click', () => saveAdminUnitRole(btn.dataset.userId)));
-    body.querySelectorAll('.admin-edit-user').forEach(btn => btn.addEventListener('click', () => editAdminUser(btn.dataset.userId)));
+    body.querySelectorAll('.admin-unit-role').forEach(sel => sel.addEventListener('change', () => saveAdminUnitRole(sel.dataset.userId)));
     body.querySelectorAll('.admin-home-unit').forEach(sel => sel.addEventListener('change', () => saveAdminHomeUnit(sel.dataset.userId, sel.value)));
     body.querySelectorAll('.admin-app-admin-toggle').forEach(input => input.addEventListener('change', () => saveAdminAppAdmin(input.dataset.userId, input.checked)));
+    body.querySelectorAll('.admin-identity-input').forEach(input => {
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          input.blur();
+        }
+      });
+      input.addEventListener('blur', () => queueInlineIdentitySave(input));
+    });
   }
 
   async function refreshUsers() {
     if (!canAdministerUniform()) return;
     if (!isDemo && !navigator.onLine) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="7">User permissions can only be managed while online.</td></tr>';
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="6">User permissions can only be managed while online.</td></tr>';
       return;
     }
     try {
@@ -1400,7 +1411,7 @@
       populateAdminManagedUnitFilter();
       renderAdminAccessTable();
     } catch (err) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="7">${escapeHtml(err.message)}</td></tr>`;
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="6">${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
@@ -1443,6 +1454,87 @@
     } catch (err) { toast(err.message || String(err)); await refreshUsers(); }
   }
 
+  function queueInlineIdentitySave(input) {
+    if (!isApplicationAdmin() || !input) return;
+    const row = input.closest('tr[data-user-id]');
+    if (!row) return;
+    const userId = row.dataset.userId;
+    if (!userId) return;
+
+    const currentValue = input.value.trim();
+    const originalValue = String(input.dataset.original || '').trim();
+    if (currentValue === originalValue) return;
+
+    input.classList.remove('saved','save-error');
+    input.classList.add('saving');
+
+    const previous = adminInlineSaveChains.get(userId) || Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(() => persistInlineIdentity(row, userId, input))
+      .finally(() => {
+        input.classList.remove('saving');
+        if (adminInlineSaveChains.get(userId) === next) adminInlineSaveChains.delete(userId);
+      });
+    adminInlineSaveChains.set(userId, next);
+  }
+
+  async function persistInlineIdentity(row, userId, changedInput) {
+    if (!navigator.onLine && !isDemo) throw new Error('Account changes require an internet connection.');
+    const user = adminUsersCache.find(x => String(x.id) === String(userId));
+    if (!user) throw new Error('User account could not be found.');
+
+    const firstName = row.querySelector('[data-field="first_name"]')?.value.trim() ?? (user.first_name || '');
+    const lastName = row.querySelector('[data-field="last_name"]')?.value.trim() ?? (user.last_name || '');
+    const capid = row.querySelector('[data-field="capid"]')?.value.trim() ?? (user.capid || '');
+    const email = row.querySelector('[data-field="email"]')?.value.trim().toLowerCase() ?? (user.email || '');
+    if (!email) {
+      changedInput.classList.add('save-error');
+      throw new Error('Email cannot be blank.');
+    }
+
+    const displayName = `${firstName} ${lastName}`.trim() || user.display_name || email;
+
+    try {
+      const { data, error } = await sb.functions.invoke('uniform-admin-users', {
+        body: {
+          action: 'update_identity',
+          user_id: userId,
+          first_name: firstName,
+          last_name: lastName,
+          capid,
+          email,
+          display_name: displayName
+        }
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      Object.assign(user, {
+        first_name: firstName,
+        last_name: lastName,
+        capid,
+        email,
+        display_name: displayName
+      });
+
+      row.querySelectorAll('.admin-identity-input').forEach(el => {
+        el.dataset.original = el.value.trim();
+        el.classList.remove('save-error');
+      });
+      const caption = row.querySelector('.admin-display-name');
+      if (caption) caption.textContent = displayName;
+
+      changedInput.classList.add('saved');
+      setTimeout(() => changedInput.classList.remove('saved'), 800);
+    } catch (err) {
+      changedInput.classList.add('save-error');
+      toast(err.message || String(err));
+      await refreshUsers();
+      throw err;
+    }
+  }
+
   function resetNewUserLookup() {
     newUserLookupResultData = null;
     const result = $('newUserLookupResult');
@@ -1476,16 +1568,24 @@
   function updateNewUserRoleUI() {
     const appAdmin = isApplicationAdmin();
     const managedUnit = $('adminManagedUnitFilter')?.value || '';
-    const role = appAdmin ? ($('newUserRole')?.value || 'inspector') : 'inspector';
+    const roleSelect = $('newUserRole');
+    const priorRole = roleSelect?.value || 'inspector';
+    const roleOptions = appAdmin
+      ? [['inspector','Inspector'],['unit_admin','Unit Admin'],['application_admin','Application Admin']]
+      : [['inspector','Inspector'],['unit_admin','Unit Admin']];
+
+    if (roleSelect) {
+      roleSelect.innerHTML = roleOptions.map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+      roleSelect.value = roleOptions.some(([v]) => v === priorRole) ? priorRole : 'inspector';
+      roleSelect.disabled = false;
+    }
+
+    const role = roleSelect?.value || 'inspector';
     const needsUnit = role !== 'application_admin';
 
-    if ($('newUserRole')) {
-      if (!appAdmin) $('newUserRole').value = 'inspector';
-      $('newUserRole').disabled = !appAdmin;
-    }
     if ($('newUserUnit')) {
       $('newUserUnit').disabled = !appAdmin || !needsUnit;
-      $('newUserUnit').required = needsUnit;
+      $('newUserUnit').required = appAdmin && needsUnit;
       if (!appAdmin && managedUnit) $('newUserUnit').value = managedUnit;
     }
     if ($('newUserHomeUnit')) {
@@ -1493,20 +1593,22 @@
       if (!appAdmin && managedUnit) $('newUserHomeUnit').value = managedUnit;
     }
 
-    if ($('newUserFormTitle')) $('newUserFormTitle').textContent = appAdmin ? 'Add / Authorize User' : 'Add Inspector';
+    if ($('newUserFormTitle')) $('newUserFormTitle').textContent = appAdmin ? 'Add / Authorize User' : 'Add User to Unit';
     if ($('newUserFormHelp')) $('newUserFormHelp').textContent = appAdmin
       ? 'CAPID is optional. Check CAPID or email to reuse an existing shared CAP Applications login before creating a new one.'
-      : 'Add an Inspector only to the selected unit. Existing accounts are reused without exposing the application-wide user directory.';
+      : 'Add an Inspector or another Unit Admin to the unit selected above. Existing shared accounts are reused without exposing the application-wide user directory.';
     if ($('newUserUnitHint')) $('newUserUnitHint').textContent = appAdmin
       ? (needsUnit ? 'Choose the unit where this user will initially be authorized.' : 'Application Admins can access every Uniform Inspection unit.')
-      : 'Unit Admins can only add Inspector access to the unit they administer.';
+      : 'Access is applied to the unit you are currently administering.';
     if ($('newUserHomeHint')) $('newUserHomeHint').textContent = appAdmin
-      ? 'This is the permanent unit selected whenever the user opens Uniform Inspections.'
+      ? 'This is the permanent unit selected whenever the user opens the application.'
       : 'For a brand-new login, this unit becomes the Home Unit. Existing users keep their current Home Unit.';
 
     const unit = unitsCache.find(u => String(u.id) === String(managedUnit));
     if ($('unitAdminAddScope')) {
-      $('unitAdminAddScope').textContent = !appAdmin && unit ? `You are adding Inspectors to ${unitOptionLabel(unit)}.` : '';
+      $('unitAdminAddScope').textContent = !appAdmin && unit
+        ? `You can add Inspectors or Unit Admins to ${unitOptionLabel(unit)}.`
+        : '';
       $('unitAdminAddScope').classList.toggle('hidden', appAdmin || !unit);
     }
   }
@@ -1600,32 +1702,6 @@
     }
   }
 
-  function editAdminUser(userId) {
-    if (!isApplicationAdmin()) return;
-    const u = adminUsersCache.find(x => String(x.id) === String(userId));
-    if (!u) return;
-    clearNewUserForm();
-    $('newUserId').value = u.id;
-    $('newUserCapid').value = u.capid || '';
-    $('newUserEmail').value = u.email || '';
-    $('newUserFirstName').value = u.first_name || '';
-    $('newUserLastName').value = u.last_name || '';
-    $('newUserName').value = u.display_name || '';
-    $('newUserHomeUnit').value = u.default_unit_id || '';
-    const unitId = $('adminManagedUnitFilter')?.value || '';
-    const role = u.is_app_admin ? 'application_admin' : adminRoleFor(u.id, unitId);
-    $('newUserRole').value = role === 'none' ? 'inspector' : role;
-    if (role !== 'application_admin' && unitId) $('newUserUnit').value = unitId;
-    newUserLookupResultData = { found: true, editing: true, user_id: u.id, ...u, selected_unit_role: role };
-    $('newUserFormTitle').textContent = 'Edit / Authorize User';
-    $('newUserLookupResult').className = 'member-lookup-result success';
-    $('newUserLookupResult').innerHTML = '<strong>Editing shared login account</strong><span>First name, last name, CAPID, and email are shared across your CAP applications. Saving here updates the shared login profile.</span>';
-    $('newUserPassword').disabled = true;
-    $('createUserSubmitBtn').disabled = false;
-    $('createUserSubmitBtn').textContent = 'Save / Authorize User';
-    $('createUserForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
   async function handleCreateUser(e) {
     e.preventDefault();
     if (!canAdministerUniform()) return;
@@ -1640,7 +1716,7 @@
 
     if (!email) return setMessage('userMessage', 'Email is required.', 'error');
 
-    const role = appAdmin ? $('newUserRole').value : 'inspector';
+    const role = $('newUserRole')?.value || 'inspector';
     const unitId = appAdmin
       ? (role === 'application_admin' ? null : ($('newUserUnit')?.value || null))
       : ($('adminManagedUnitFilter')?.value || null);
