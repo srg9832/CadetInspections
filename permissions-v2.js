@@ -244,10 +244,6 @@
             </label>
           </div>
 
-          <div class="admin-form-actions" style="justify-content:flex-start">
-            <button id="clearUserFormBtn" class="secondary" type="button">Clear</button>
-          </div>
-
           <div id="newUserLookupResult" class="member-lookup-result hidden"></div>
 
           <div class="create-user-grid">
@@ -275,6 +271,7 @@
 
           <div class="admin-form-actions">
             <button id="createUserSubmitBtn" class="primary" type="submit">Create / Authorize User</button>
+            <button id="clearUserFormBtn" class="secondary" type="button">Clear</button>
             <span id="userMessage" class="form-message"></span>
           </div>
         </form>
