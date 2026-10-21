@@ -268,11 +268,17 @@
     $('exportAllBtn').addEventListener('click', exportAllCSV);
     $('exportInspectorBtn').addEventListener('click', exportInspectorAnalysisCSV);
     $('createUserForm')?.addEventListener('submit', handleCreateUser);
-    $('lookupMemberBtn')?.addEventListener('click', () => lookupNewUserByCapid());
+    $('lookupMemberBtn')?.addEventListener('click', () => lookupNewUserAccount());
+    $('clearUserFormBtn')?.addEventListener('click', clearNewUserForm);
     $('newUserCapid')?.addEventListener('input', resetNewUserLookup);
+    $('newUserEmail')?.addEventListener('input', resetNewUserLookup);
     $('newUserRole')?.addEventListener('change', () => { resetNewUserLookup(); updateNewUserRoleUI(); });
     $('newUserUnit')?.addEventListener('change', resetNewUserLookup);
     $('newUserHomeUnit')?.addEventListener('change', resetNewUserLookup);
+    $('changePasswordBtn')?.addEventListener('click', () => openPasswordChange(false));
+    $('passwordChangeCloseBtn')?.addEventListener('click', closePasswordChange);
+    $('passwordChangeCancelBtn')?.addEventListener('click', closePasswordChange);
+    $('passwordChangeForm')?.addEventListener('submit', handlePasswordChange);
     $('adminManagedUnitFilter')?.addEventListener('change', async () => {
       resetNewUserLookup();
       updateNewUserRoleUI();
@@ -438,6 +444,7 @@
     if (isDemo || !offlineStore) return;
     const profile = await offlineStore.getCachedProfile().catch(() => null);
     if (!profile) return setMessage('loginMessage', 'This tablet does not have a previously authorized user cached yet. Connect to the internet and sign in once.', 'error');
+    if (profile.must_change_password) return setMessage('loginMessage', 'This account must change its temporary password before offline use. Connect to the internet and sign in.', 'error');
     offlineSession = true;
     await enterApp(profile, { onlineLogin: false });
     toast('Offline mode — inspections will queue on this tablet');
@@ -483,6 +490,13 @@
     }
     if (error) throw new Error(`Signed in, but this shared CAP account is not authorized for Uniform Inspections: ${error.message}`);
     if (!data || data.id !== id) throw new Error('Signed in, but this shared CAP account is not authorized for Uniform Inspections.');
+
+    const { data: sharedProfile, error: sharedError } = await sb.from('profiles')
+      .select('display_name,first_name,last_name,capid,default_unit_id,must_change_password,password_changed_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (sharedError) throw sharedError;
+    if (sharedProfile) Object.assign(data, sharedProfile);
     return data;
   }
 
@@ -534,7 +548,65 @@
       await refreshUnitsAdmin();
     }
     await updateSyncStatus();
-    setTimeout(() => $('capid').focus(), 0);
+    if (profile.must_change_password) {
+      if (offlineSession || !navigator.onLine) toast('Connect to the internet to change your temporary password.');
+      else setTimeout(() => openPasswordChange(true), 0);
+    } else {
+      setTimeout(() => $('capid').focus(), 0);
+    }
+  }
+
+  function openPasswordChange(force = false) {
+    if (isDemo) return toast('Password changes are only available in Supabase mode.');
+    if (!navigator.onLine) return toast('Connect to the internet before changing your password.');
+    const dialog = $('passwordChangeDialog');
+    if (!dialog) return;
+    dialog.classList.toggle('force-change', Boolean(force));
+    dialog.dataset.force = force ? 'true' : 'false';
+    $('passwordChangeTitle').textContent = force ? 'Change Temporary Password' : 'Change Password';
+    $('passwordChangeHelp').textContent = force
+      ? 'This is your first sign-in with a temporary password. Choose your own password before continuing.'
+      : 'This changes your shared CAP Applications password across Schedule, Leadership Feedback, Drill Tests, and Uniform Inspections.';
+    $('newPassword').value = '';
+    $('confirmNewPassword').value = '';
+    setMessage('passwordChangeMessage', '', '');
+    dialog.showModal();
+    setTimeout(() => $('newPassword').focus(), 0);
+  }
+
+  function closePasswordChange() {
+    const dialog = $('passwordChangeDialog');
+    if (!dialog || dialog.dataset.force === 'true') return;
+    dialog.close();
+  }
+
+  async function handlePasswordChange(e) {
+    e.preventDefault();
+    const password = $('newPassword').value;
+    const confirm = $('confirmNewPassword').value;
+    if (password.length < 8) return setMessage('passwordChangeMessage', 'Password must be at least 8 characters.', 'error');
+    if (password !== confirm) return setMessage('passwordChangeMessage', 'Passwords do not match.', 'error');
+    const button = $('passwordChangeSaveBtn');
+    button.disabled = true;
+    button.textContent = 'Changing…';
+    try {
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) throw error;
+      const { error: profileError } = await sb.rpc('shared_complete_password_change');
+      if (profileError) throw profileError;
+      currentProfile.must_change_password = false;
+      if (offlineStore) await offlineStore.cacheProfile(currentProfile).catch(console.warn);
+      $('passwordChangeDialog').dataset.force = 'false';
+      $('passwordChangeDialog').classList.remove('force-change');
+      $('passwordChangeDialog').close();
+      toast('Password changed for your shared CAP Applications account');
+      setTimeout(() => $('capid').focus(), 0);
+    } catch (err) {
+      setMessage('passwordChangeMessage', err.message || String(err), 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Change Password';
+    }
   }
 
   function showLogin() {
@@ -1290,9 +1362,13 @@
         ? `<label class="permission-toggle"><input class="admin-app-admin-toggle" data-user-id="${u.id}" type="checkbox" ${u.is_app_admin?'checked':''}> <span>${u.is_app_admin?'Yes':'No'}</span></label>`
         : (u.is_app_admin ? '<span class="permission-badge app-admin">Application Admin</span>' : '—');
 
-      const action = canEditRole
-        ? `<button class="secondary small-action admin-save-role" type="button" data-user-id="${u.id}">Apply</button>`
+      const roleAction = canEditRole
+        ? `<button class="secondary small-action admin-save-role" type="button" data-user-id="${u.id}">Apply Access</button>`
         : '<span class="confidence-note">App Admin only</span>';
+      const identityAction = callerIsAppAdmin
+        ? `<button class="secondary small-action admin-edit-user" type="button" data-user-id="${u.id}">Edit Account</button>`
+        : '';
+      const action = `<div style="display:flex;gap:6px;flex-wrap:wrap">${roleAction}${identityAction}</div>`;
 
       return `<tr>
         <td><strong>${escapeHtml(u.display_name || '')}</strong></td>
@@ -1306,6 +1382,7 @@
     }).join('') || `<tr><td colspan="7">${callerIsAppAdmin ? 'No users match this search.' : 'No Inspectors are assigned to this unit yet.'}</td></tr>`;
 
     body.querySelectorAll('.admin-save-role').forEach(btn => btn.addEventListener('click', () => saveAdminUnitRole(btn.dataset.userId)));
+    body.querySelectorAll('.admin-edit-user').forEach(btn => btn.addEventListener('click', () => editAdminUser(btn.dataset.userId)));
     body.querySelectorAll('.admin-home-unit').forEach(sel => sel.addEventListener('change', () => saveAdminHomeUnit(sel.dataset.userId, sel.value)));
     body.querySelectorAll('.admin-app-admin-toggle').forEach(input => input.addEventListener('change', () => saveAdminAppAdmin(input.dataset.userId, input.checked)));
   }
@@ -1374,9 +1451,19 @@
       result.innerHTML = '';
     }
     if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = false;
-    if ($('newUserName')) $('newUserName').readOnly = false;
-    if ($('newUserEmail')) $('newUserEmail').disabled = false;
+  }
+
+  function clearNewUserForm() {
+    $('createUserForm')?.reset();
+    if ($('newUserId')) $('newUserId').value = '';
+    ['newUserCapid','newUserEmail','newUserFirstName','newUserLastName','newUserName'].forEach(id => {
+      if ($(id)) $(id).readOnly = false;
+    });
     if ($('newUserPassword')) $('newUserPassword').disabled = false;
+    resetNewUserLookup();
+    populateUnitSelectors();
+    updateNewUserRoleUI();
+    setMessage('userMessage', '', '');
   }
 
   function selectedUnitForUserProvisioning() {
@@ -1396,13 +1483,11 @@
       if (!appAdmin) $('newUserRole').value = 'inspector';
       $('newUserRole').disabled = !appAdmin;
     }
-
     if ($('newUserUnit')) {
       $('newUserUnit').disabled = !appAdmin || !needsUnit;
       $('newUserUnit').required = needsUnit;
       if (!appAdmin && managedUnit) $('newUserUnit').value = managedUnit;
     }
-
     if ($('newUserHomeUnit')) {
       $('newUserHomeUnit').disabled = !appAdmin;
       if (!appAdmin && managedUnit) $('newUserHomeUnit').value = managedUnit;
@@ -1410,146 +1495,151 @@
 
     if ($('newUserFormTitle')) $('newUserFormTitle').textContent = appAdmin ? 'Add / Authorize User' : 'Add Inspector';
     if ($('newUserFormHelp')) $('newUserFormHelp').textContent = appAdmin
-      ? 'Start with CAPID. The application will find the CAP member and detect an existing shared account before creating anything.'
-      : 'Enter a CAPID to add an Inspector to the unit selected above. You will only see and manage users assigned to units you administer.';
-
+      ? 'CAPID is optional. Check CAPID or email to reuse an existing shared CAP Applications login before creating a new one.'
+      : 'Add an Inspector only to the selected unit. Existing accounts are reused without exposing the application-wide user directory.';
     if ($('newUserUnitHint')) $('newUserUnitHint').textContent = appAdmin
       ? (needsUnit ? 'Choose the unit where this user will initially be authorized.' : 'Application Admins can access every Uniform Inspection unit.')
       : 'Unit Admins can only add Inspector access to the unit they administer.';
-
     if ($('newUserHomeHint')) $('newUserHomeHint').textContent = appAdmin
-      ? 'This is the permanent unit selected whenever the user opens the application.'
-      : 'For a new account, this unit becomes the Home Unit. Existing users keep their current Home Unit.';
+      ? 'This is the permanent unit selected whenever the user opens Uniform Inspections.'
+      : 'For a brand-new login, this unit becomes the Home Unit. Existing users keep their current Home Unit.';
 
     const unit = unitsCache.find(u => String(u.id) === String(managedUnit));
     if ($('unitAdminAddScope')) {
-      $('unitAdminAddScope').textContent = !appAdmin && unit
-        ? `You are adding Inspectors to ${unitOptionLabel(unit)}.`
-        : '';
+      $('unitAdminAddScope').textContent = !appAdmin && unit ? `You are adding Inspectors to ${unitOptionLabel(unit)}.` : '';
       $('unitAdminAddScope').classList.toggle('hidden', appAdmin || !unit);
     }
   }
 
-  async function lookupNewUserByCapid({ quiet = false } = {}) {
+  async function lookupNewUserAccount({ quiet = false } = {}) {
     const capid = $('newUserCapid')?.value.trim() || '';
+    const email = $('newUserEmail')?.value.trim().toLowerCase() || '';
     const unitId = selectedUnitForUserProvisioning();
-    if (!capid) {
-      if (!quiet) setMessage('userMessage', 'Enter a CAPID first.', 'error');
+
+    if (!capid && !email) {
+      if (!quiet) setMessage('userMessage', 'Enter a CAPID or email address to check for an existing account.', 'error');
       return null;
     }
     if (!unitId) {
       if (!quiet) setMessage('userMessage', 'Choose the unit first.', 'error');
       return null;
     }
-    if (!navigator.onLine && !isDemo) {
-      if (!quiet) setMessage('userMessage', 'Looking up CAPIDs requires an internet connection.', 'error');
-      return null;
-    }
-
-    if (isDemo) {
-      if (!quiet) setMessage('userMessage', 'CAPID lookup is available in Supabase mode.', 'error');
+    if (!navigator.onLine || isDemo) {
+      if (!quiet) setMessage('userMessage', 'Account lookup requires an online Supabase connection.', 'error');
       return null;
     }
 
     const button = $('lookupMemberBtn');
-    if (button) { button.disabled = true; button.textContent = 'Looking up…'; }
+    if (button) { button.disabled = true; button.textContent = 'Checking…'; }
     try {
-      const { data, error } = await sb.rpc('uniform_admin_lookup_member', {
-        p_unit_id: unitId,
-        p_capid: capid
+      const { data, error } = await sb.functions.invoke('uniform-admin-users', {
+        body: { action: 'lookup', unit_id: unitId, capid, email }
       });
       if (error) throw error;
-      const member = Array.isArray(data) ? data[0] : data;
-      if (!member) {
-        newUserLookupResultData = null;
-        const result = $('newUserLookupResult');
-        if (result) {
-          result.className = 'member-lookup-result error';
-          result.innerHTML = `<strong>No member found.</strong><span>No CAP member matches CAPID ${escapeHtml(capid)}.</span>`;
-        }
-        if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = true;
-        return null;
-      }
-
-      newUserLookupResultData = member;
-      const name = [member.first_name, member.last_name].filter(Boolean).join(' ').trim();
-      if ($('newUserName')) {
-        $('newUserName').value = name;
-        $('newUserName').readOnly = true;
-      }
+      if (data?.error) throw new Error(data.error);
 
       const result = $('newUserLookupResult');
-      const selectedUnit = unitsCache.find(u => String(u.id) === String(unitId));
-      const memberHome = unitsCache.find(u => String(u.id) === String(member.primary_unit_id || ''));
-      let headline = `${escapeHtml(name)} · CAPID ${escapeHtml(member.capid)}`;
-      let detail = `${escapeHtml(member.current_grade || 'Grade not listed')}`;
-      if (memberHome) detail += ` · CAP membership unit: ${escapeHtml(memberHome.charter_number || memberHome.name)}`;
+      if (!data?.found) {
+        newUserLookupResultData = { found: false };
+        if (result) {
+          result.className = 'member-lookup-result success';
+          result.innerHTML = '<strong>No existing shared login found.</strong><span>Complete the name, email, and temporary password to create a new account. CAPID may be left blank.</span>';
+        }
+        if ($('newUserId')) $('newUserId').value = '';
+        return newUserLookupResultData;
+      }
 
+      newUserLookupResultData = data;
+      if ($('newUserId')) $('newUserId').value = data.user_id || '';
+      if ($('newUserCapid') && data.capid) $('newUserCapid').value = data.capid;
+      if ($('newUserEmail')) $('newUserEmail').value = data.email || email;
+      if ($('newUserFirstName')) $('newUserFirstName').value = data.first_name || '';
+      if ($('newUserLastName')) $('newUserLastName').value = data.last_name || '';
+      if ($('newUserName')) $('newUserName').value = data.display_name || '';
+
+      const selectedUnit = unitsCache.find(u => String(u.id) === String(unitId));
       let stateClass = 'success';
-      let statusText = '';
+      let statusText = 'Existing shared CAP Applications login found. This account can be authorized for the selected unit without creating another login.';
       let blockSubmit = false;
 
-      if (member.selected_unit_role === 'application_admin' || member.is_app_admin) {
+      if (data.selected_unit_role === 'application_admin') {
         stateClass = 'warning';
-        statusText = 'This member is already an Application Admin and already has access to every unit.';
+        statusText = 'This account is already an Application Admin and already has access to every Uniform Inspection unit.';
         blockSubmit = true;
-      } else if (member.selected_unit_role === 'unit_admin') {
+      } else if (data.selected_unit_role === 'unit_admin') {
         stateClass = 'warning';
-        statusText = `This member is already a Unit Admin for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
+        statusText = `This account is already a Unit Admin for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
         blockSubmit = true;
-      } else if (member.selected_unit_role === 'inspector') {
+      } else if (data.selected_unit_role === 'inspector') {
         stateClass = 'warning';
-        statusText = `This member is already an Inspector for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
+        statusText = `This account is already an Inspector for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
         blockSubmit = true;
-      } else if (member.has_shared_account) {
-        statusText = member.has_uniform_access_any
-          ? 'An existing Uniform Inspection account was found. Adding this unit will extend the existing account; no new account or password is needed.'
-          : 'An existing shared CAP Applications account was found. You can authorize it for this unit; no new account or password is needed.';
-      } else {
-        statusText = 'No shared CAP Applications account is linked to this CAPID yet. Enter an email and temporary password to create the account.';
       }
 
       if (result) {
         result.className = `member-lookup-result ${stateClass}`;
-        result.innerHTML = `<strong>${headline}</strong><span>${detail}</span><span>${statusText}</span>`;
+        result.innerHTML = `<strong>${escapeHtml(data.display_name || data.email || 'Existing account')}</strong><span>${escapeHtml(data.capid ? 'CAPID ' + data.capid : 'No CAPID assigned')} · ${escapeHtml(data.email || '')}</span><span>${statusText}</span>`;
       }
 
-      if ($('newUserEmail')) {
-        $('newUserEmail').disabled = Boolean(member.has_shared_account);
-        if (member.has_shared_account) $('newUserEmail').value = '';
-      }
       if ($('newUserPassword')) {
-        $('newUserPassword').disabled = Boolean(member.has_shared_account);
-        if (member.has_shared_account) $('newUserPassword').value = '';
+        $('newUserPassword').value = '';
+        $('newUserPassword').disabled = true;
+      }
+      if (!isApplicationAdmin()) {
+        ['newUserCapid','newUserEmail','newUserFirstName','newUserLastName','newUserName'].forEach(id => { if ($(id)) $(id).readOnly = true; });
       }
       if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = blockSubmit;
       setMessage('userMessage', '', '');
-      return member;
+      return data;
     } catch (err) {
       newUserLookupResultData = null;
       if (!quiet) setMessage('userMessage', err.message || String(err), 'error');
       return null;
     } finally {
-      if (button) { button.disabled = false; button.textContent = 'Find CAP Member'; }
+      if (button) { button.disabled = false; button.textContent = 'Check Existing Account'; }
     }
+  }
+
+  function editAdminUser(userId) {
+    if (!isApplicationAdmin()) return;
+    const u = adminUsersCache.find(x => String(x.id) === String(userId));
+    if (!u) return;
+    clearNewUserForm();
+    $('newUserId').value = u.id;
+    $('newUserCapid').value = u.capid || '';
+    $('newUserEmail').value = u.email || '';
+    $('newUserFirstName').value = u.first_name || '';
+    $('newUserLastName').value = u.last_name || '';
+    $('newUserName').value = u.display_name || '';
+    $('newUserHomeUnit').value = u.default_unit_id || '';
+    const unitId = $('adminManagedUnitFilter')?.value || '';
+    const role = u.is_app_admin ? 'application_admin' : adminRoleFor(u.id, unitId);
+    $('newUserRole').value = role === 'none' ? 'inspector' : role;
+    if (role !== 'application_admin' && unitId) $('newUserUnit').value = unitId;
+    newUserLookupResultData = { found: true, user_id: u.id, ...u, selected_unit_role: role };
+    $('newUserFormTitle').textContent = 'Edit / Authorize User';
+    $('newUserLookupResult').className = 'member-lookup-result success';
+    $('newUserLookupResult').innerHTML = '<strong>Editing shared login account</strong><span>First name, last name, CAPID, and email are shared across your CAP applications. Saving here updates the shared login profile.</span>';
+    $('newUserPassword').disabled = true;
+    $('createUserSubmitBtn').disabled = false;
+    $('createUserSubmitBtn').textContent = 'Save / Authorize User';
+    $('createUserForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function handleCreateUser(e) {
     e.preventDefault();
     if (!canAdministerUniform()) return;
 
-    const capid = $('newUserCapid')?.value.trim() || '';
-    if (!capid) return setMessage('userMessage', 'Enter a CAPID.', 'error');
-
-    let lookup = newUserLookupResultData;
-    if (!lookup || String(lookup.capid) !== capid) lookup = await lookupNewUserByCapid({ quiet: true });
-    if (!lookup) return setMessage('userMessage', 'Find the CAP member before adding access.', 'error');
-
-    if (['inspector','unit_admin','application_admin'].includes(lookup.selected_unit_role)) {
-      return setMessage('userMessage', 'This member already has access at this level for the selected unit.', 'error');
-    }
-
     const appAdmin = isApplicationAdmin();
+    const existingUserId = $('newUserId')?.value || '';
+    const capid = $('newUserCapid')?.value.trim() || '';
+    const email = $('newUserEmail')?.value.trim().toLowerCase() || '';
+    const firstName = $('newUserFirstName')?.value.trim() || '';
+    const lastName = $('newUserLastName')?.value.trim() || '';
+    const displayName = $('newUserName')?.value.trim() || `${firstName} ${lastName}`.trim() || email;
+
+    if (!email) return setMessage('userMessage', 'Email is required.', 'error');
+
     const role = appAdmin ? $('newUserRole').value : 'inspector';
     const unitId = appAdmin
       ? (role === 'application_admin' ? null : ($('newUserUnit')?.value || null))
@@ -1558,35 +1648,47 @@
       ? ($('newUserHomeUnit')?.value || null)
       : ($('adminManagedUnitFilter')?.value || null);
 
+    if (!homeUnitId) return setMessage('userMessage', 'Choose a Home Unit.', 'error');
+    if (role !== 'application_admin' && !unitId) return setMessage('userMessage', 'Choose the unit for this access.', 'error');
+
+    if (!existingUserId && !newUserLookupResultData) {
+      const lookup = await lookupNewUserAccount({ quiet: true });
+      if (lookup?.found && $('newUserId')) $('newUserId').value = lookup.user_id || '';
+    }
+
+    const resolvedUserId = $('newUserId')?.value || '';
+    const password = $('newUserPassword')?.disabled ? '' : $('newUserPassword')?.value || '';
+    if (!resolvedUserId && password.length < 8) {
+      return setMessage('userMessage', 'A temporary password of at least 8 characters is required for a brand-new shared login.', 'error');
+    }
+
     const payload = {
+      action: 'save',
+      user_id: resolvedUserId || null,
       capid,
-      display_name: $('newUserName').value.trim(),
-      email: $('newUserEmail').disabled ? '' : $('newUserEmail').value.trim().toLowerCase(),
-      password: $('newUserPassword').disabled ? '' : $('newUserPassword').value,
+      first_name: firstName,
+      last_name: lastName,
+      display_name: displayName,
+      email,
+      password,
       role,
       unit_id: unitId,
       home_unit_id: homeUnitId
     };
 
     setMessage('userMessage', '', '');
-
-    if (!homeUnitId) return setMessage('userMessage', 'Choose a Home Unit.', 'error');
-    if (role !== 'application_admin' && !unitId) return setMessage('userMessage', 'Choose the unit for this access.', 'error');
-    if (!lookup.has_shared_account && !payload.email) return setMessage('userMessage', 'Enter an email address for the new shared CAP account.', 'error');
-
     const button = $('createUserSubmitBtn');
-    if (button) { button.disabled = true; button.textContent = lookup.has_shared_account ? 'Adding Access…' : 'Creating Account…'; }
+    if (button) { button.disabled = true; button.textContent = resolvedUserId ? 'Saving…' : 'Creating…'; }
 
     try {
       const result = await createUser(payload);
       const unit = unitsCache.find(u => String(u.id) === String(unitId || homeUnitId));
-      const scope = role === 'application_admin' ? 'Application Admin' : `${profileRoleLabel({ role, is_app_admin: role === 'application_admin', is_unit_admin: role === 'unit_admin' })} for ${unit ? unitOptionLabel(unit) : 'the selected unit'}`;
-      setMessage('userMessage', `${result?.member_name || payload.display_name} authorized as ${scope}.`, 'success');
-      toast(result?.created_new_account ? 'Account created and access granted' : 'Existing account access updated');
-      $('createUserForm').reset();
-      resetNewUserLookup();
-      populateUnitSelectors();
-      updateNewUserRoleUI();
+      const scope = role === 'application_admin'
+        ? 'Application Admin'
+        : `${role === 'unit_admin' ? 'Unit Admin' : 'Inspector'} for ${unit ? unitOptionLabel(unit) : 'the selected unit'}`;
+      setMessage('userMessage', `${result?.display_name || displayName} authorized as ${scope}.`, 'success');
+      toast(result?.created_new_account ? 'Account created — temporary password must be changed at first login' : 'Existing shared account updated');
+      clearNewUserForm();
       await refreshUsers();
     } catch (err) {
       setMessage('userMessage', err.message || String(err), 'error');
@@ -1698,7 +1800,7 @@
 
   async function listProfiles() {
     if (isDemo) return loadLS(LS.users, []).map(stripPassword).sort((a,b) => (a.display_name || '').localeCompare(b.display_name || ''));
-    const { data, error } = await sb.rpc('uniform_admin_list_users_v2');
+    const { data, error } = await sb.rpc('uniform_admin_list_users_v3');
     if (error) throw error;
     return data || [];
   }
@@ -1823,7 +1925,7 @@
       gradingRules = rules; await offlineStore.cacheGradingRules(rules); await offlineStore.markServerRefresh();
       populateUnitSelectors(); updateGradingRuleForm(); updateLiveScore(); refreshAllBulkRows();
       if (currentProfile) await refreshCadetSelectors();
-      if (currentProfile?.role === 'admin') await refreshUnitsAdmin();
+      if (canAdministerUniform()) await refreshUnitsAdmin();
       if (!quiet) toast('Offline tablet data refreshed');
     } catch (err) { console.warn('Offline cache refresh failed:', err); if (!quiet) toast(`Refresh failed: ${err.message || err}`); }
     finally { await updateSyncStatus(); }
