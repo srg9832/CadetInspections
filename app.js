@@ -1616,7 +1616,7 @@
     const role = u.is_app_admin ? 'application_admin' : adminRoleFor(u.id, unitId);
     $('newUserRole').value = role === 'none' ? 'inspector' : role;
     if (role !== 'application_admin' && unitId) $('newUserUnit').value = unitId;
-    newUserLookupResultData = { found: true, user_id: u.id, ...u, selected_unit_role: role };
+    newUserLookupResultData = { found: true, editing: true, user_id: u.id, ...u, selected_unit_role: role };
     $('newUserFormTitle').textContent = 'Edit / Authorize User';
     $('newUserLookupResult').className = 'member-lookup-result success';
     $('newUserLookupResult').innerHTML = '<strong>Editing shared login account</strong><span>First name, last name, CAPID, and email are shared across your CAP applications. Saving here updates the shared login profile.</span>';
@@ -1665,6 +1665,7 @@
     const payload = {
       action: 'save',
       user_id: resolvedUserId || null,
+      edit_identity: Boolean(appAdmin && newUserLookupResultData?.editing),
       capid,
       first_name: firstName,
       last_name: lastName,
