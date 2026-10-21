@@ -14,6 +14,7 @@
   let inspectorDirectory = [];
   let adminUsersCache = [];
   let adminUnitRolesCache = [];
+  let newUserLookupResultData = null;
   let workingUnitId = null;
   let bulkRowSerial = 0;
   const offlineStore = window.CAPOfflineStore || null;
@@ -267,8 +268,16 @@
     $('exportAllBtn').addEventListener('click', exportAllCSV);
     $('exportInspectorBtn').addEventListener('click', exportInspectorAnalysisCSV);
     $('createUserForm')?.addEventListener('submit', handleCreateUser);
-    $('newUserRole')?.addEventListener('change', updateNewUserRoleUI);
-    $('adminManagedUnitFilter')?.addEventListener('change', renderAdminAccessTable);
+    $('lookupMemberBtn')?.addEventListener('click', () => lookupNewUserByCapid());
+    $('newUserCapid')?.addEventListener('input', resetNewUserLookup);
+    $('newUserRole')?.addEventListener('change', () => { resetNewUserLookup(); updateNewUserRoleUI(); });
+    $('newUserUnit')?.addEventListener('change', resetNewUserLookup);
+    $('newUserHomeUnit')?.addEventListener('change', resetNewUserLookup);
+    $('adminManagedUnitFilter')?.addEventListener('change', async () => {
+      resetNewUserLookup();
+      updateNewUserRoleUI();
+      renderAdminAccessTable();
+    });
     $('adminUserSearch')?.addEventListener('input', renderAdminAccessTable);
     $('bulkAddRowBtn').addEventListener('click', () => addBulkRow());
     $('bulkAdd10Btn').addEventListener('click', () => seedBulkRows(10));
@@ -1240,6 +1249,7 @@
         ? 'Application Admin: you can manage access for every unit.'
         : 'Unit Admin: you can grant or remove Inspector access only for units you administer.';
     }
+    updateNewUserRoleUI();
   }
 
   function renderAdminAccessTable() {
@@ -1248,11 +1258,17 @@
     const unitId = $('adminManagedUnitFilter')?.value || '';
     const search = ($('adminUserSearch')?.value || '').trim().toLowerCase();
     if (!unitId) {
-      body.innerHTML = '<tr><td colspan="6">No unit is available for administration.</td></tr>';
+      body.innerHTML = '<tr><td colspan="7">No unit is available for administration.</td></tr>';
       return;
     }
+
     const callerIsAppAdmin = isApplicationAdmin();
-    const filtered = adminUsersCache.filter(u => !search || `${u.display_name || ''} ${u.email || ''}`.toLowerCase().includes(search));
+    let filtered = adminUsersCache.filter(u => {
+      if (!callerIsAppAdmin && adminRoleFor(u.id, unitId) === 'none') return false;
+      if (!search) return true;
+      return `${u.display_name || ''} ${u.email || ''} ${u.capid || ''}`.toLowerCase().includes(search);
+    });
+
     body.innerHTML = filtered.map(u => {
       const role = adminRoleFor(u.id, unitId);
       const targetIsUnitAdmin = role === 'unit_admin';
@@ -1261,6 +1277,7 @@
         ? [['none','No Access'],['inspector','Inspector'],['unit_admin','Unit Admin']]
         : (targetIsUnitAdmin ? [['unit_admin','Unit Admin']] : [['none','No Access'],['inspector','Inspector']]);
       const roleSelect = `<select class="admin-unit-role" data-user-id="${u.id}" ${canEditRole ? '' : 'disabled'}>${roleOptions.map(([v,l]) => `<option value="${v}" ${v===role?'selected':''}>${l}</option>`).join('')}</select>`;
+
       const homeUnit = unitsCache.find(x => String(x.id) === String(u.default_unit_id || ''));
       let homeCell = escapeHtml(homeUnit ? unitOptionLabel(homeUnit) : 'Not set');
       if (callerIsAppAdmin) {
@@ -1268,21 +1285,25 @@
         const opts = ['<option value="">Select home unit...</option>'].concat(choices.map(x => `<option value="${x.id}" ${String(x.id)===String(u.default_unit_id||'')?'selected':''}>${escapeHtml(unitOptionLabel(x))}</option>`));
         homeCell = `<select class="admin-home-unit" data-user-id="${u.id}">${opts.join('')}</select>`;
       }
+
       const appAdminCell = callerIsAppAdmin
         ? `<label class="permission-toggle"><input class="admin-app-admin-toggle" data-user-id="${u.id}" type="checkbox" ${u.is_app_admin?'checked':''}> <span>${u.is_app_admin?'Yes':'No'}</span></label>`
         : (u.is_app_admin ? '<span class="permission-badge app-admin">Application Admin</span>' : '—');
+
       const action = canEditRole
         ? `<button class="secondary small-action admin-save-role" type="button" data-user-id="${u.id}">Apply</button>`
         : '<span class="confidence-note">App Admin only</span>';
+
       return `<tr>
         <td><strong>${escapeHtml(u.display_name || '')}</strong></td>
+        <td>${escapeHtml(u.capid || 'Not linked')}</td>
         <td>${escapeHtml(u.email || '')}</td>
         <td>${homeCell}</td>
         <td>${roleSelect}</td>
         <td>${appAdminCell}</td>
         <td>${action}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6">No users match this search.</td></tr>';
+    }).join('') || `<tr><td colspan="7">${callerIsAppAdmin ? 'No users match this search.' : 'No Inspectors are assigned to this unit yet.'}</td></tr>`;
 
     body.querySelectorAll('.admin-save-role').forEach(btn => btn.addEventListener('click', () => saveAdminUnitRole(btn.dataset.userId)));
     body.querySelectorAll('.admin-home-unit').forEach(sel => sel.addEventListener('change', () => saveAdminHomeUnit(sel.dataset.userId, sel.value)));
@@ -1292,7 +1313,7 @@
   async function refreshUsers() {
     if (!canAdministerUniform()) return;
     if (!isDemo && !navigator.onLine) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="6">User permissions can only be managed while online.</td></tr>';
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="7">User permissions can only be managed while online.</td></tr>';
       return;
     }
     try {
@@ -1302,7 +1323,7 @@
       populateAdminManagedUnitFilter();
       renderAdminAccessTable();
     } catch (err) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="6">${escapeHtml(err.message)}</td></tr>`;
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="7">${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
@@ -1345,42 +1366,232 @@
     } catch (err) { toast(err.message || String(err)); await refreshUsers(); }
   }
 
-  function updateNewUserRoleUI() {
-    const role = $('newUserRole')?.value || 'inspector';
-    const needsUnit = role !== 'application_admin';
-    if ($('newUserUnit')) {
-      $('newUserUnit').disabled = !needsUnit;
-      $('newUserUnit').required = needsUnit;
+  function resetNewUserLookup() {
+    newUserLookupResultData = null;
+    const result = $('newUserLookupResult');
+    if (result) {
+      result.className = 'member-lookup-result hidden';
+      result.innerHTML = '';
     }
-    if ($('newUserUnitHint')) $('newUserUnitHint').textContent = needsUnit
-      ? 'Choose the unit where this user will initially be authorized.'
-      : 'Application Admins can access all Uniform Inspection units.';
+    if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = false;
+    if ($('newUserName')) $('newUserName').readOnly = false;
+    if ($('newUserEmail')) $('newUserEmail').disabled = false;
+    if ($('newUserPassword')) $('newUserPassword').disabled = false;
+  }
+
+  function selectedUnitForUserProvisioning() {
+    if (!isApplicationAdmin()) return $('adminManagedUnitFilter')?.value || '';
+    const role = $('newUserRole')?.value || 'inspector';
+    if (role === 'application_admin') return $('newUserHomeUnit')?.value || $('adminManagedUnitFilter')?.value || '';
+    return $('newUserUnit')?.value || $('adminManagedUnitFilter')?.value || '';
+  }
+
+  function updateNewUserRoleUI() {
+    const appAdmin = isApplicationAdmin();
+    const managedUnit = $('adminManagedUnitFilter')?.value || '';
+    const role = appAdmin ? ($('newUserRole')?.value || 'inspector') : 'inspector';
+    const needsUnit = role !== 'application_admin';
+
+    if ($('newUserRole')) {
+      if (!appAdmin) $('newUserRole').value = 'inspector';
+      $('newUserRole').disabled = !appAdmin;
+    }
+
+    if ($('newUserUnit')) {
+      $('newUserUnit').disabled = !appAdmin || !needsUnit;
+      $('newUserUnit').required = needsUnit;
+      if (!appAdmin && managedUnit) $('newUserUnit').value = managedUnit;
+    }
+
+    if ($('newUserHomeUnit')) {
+      $('newUserHomeUnit').disabled = !appAdmin;
+      if (!appAdmin && managedUnit) $('newUserHomeUnit').value = managedUnit;
+    }
+
+    if ($('newUserFormTitle')) $('newUserFormTitle').textContent = appAdmin ? 'Add / Authorize User' : 'Add Inspector';
+    if ($('newUserFormHelp')) $('newUserFormHelp').textContent = appAdmin
+      ? 'Start with CAPID. The application will find the CAP member and detect an existing shared account before creating anything.'
+      : 'Enter a CAPID to add an Inspector to the unit selected above. You will only see and manage users assigned to units you administer.';
+
+    if ($('newUserUnitHint')) $('newUserUnitHint').textContent = appAdmin
+      ? (needsUnit ? 'Choose the unit where this user will initially be authorized.' : 'Application Admins can access every Uniform Inspection unit.')
+      : 'Unit Admins can only add Inspector access to the unit they administer.';
+
+    if ($('newUserHomeHint')) $('newUserHomeHint').textContent = appAdmin
+      ? 'This is the permanent unit selected whenever the user opens the application.'
+      : 'For a new account, this unit becomes the Home Unit. Existing users keep their current Home Unit.';
+
+    const unit = unitsCache.find(u => String(u.id) === String(managedUnit));
+    if ($('unitAdminAddScope')) {
+      $('unitAdminAddScope').textContent = !appAdmin && unit
+        ? `You are adding Inspectors to ${unitOptionLabel(unit)}.`
+        : '';
+      $('unitAdminAddScope').classList.toggle('hidden', appAdmin || !unit);
+    }
+  }
+
+  async function lookupNewUserByCapid({ quiet = false } = {}) {
+    const capid = $('newUserCapid')?.value.trim() || '';
+    const unitId = selectedUnitForUserProvisioning();
+    if (!capid) {
+      if (!quiet) setMessage('userMessage', 'Enter a CAPID first.', 'error');
+      return null;
+    }
+    if (!unitId) {
+      if (!quiet) setMessage('userMessage', 'Choose the unit first.', 'error');
+      return null;
+    }
+    if (!navigator.onLine && !isDemo) {
+      if (!quiet) setMessage('userMessage', 'Looking up CAPIDs requires an internet connection.', 'error');
+      return null;
+    }
+
+    if (isDemo) {
+      if (!quiet) setMessage('userMessage', 'CAPID lookup is available in Supabase mode.', 'error');
+      return null;
+    }
+
+    const button = $('lookupMemberBtn');
+    if (button) { button.disabled = true; button.textContent = 'Looking up…'; }
+    try {
+      const { data, error } = await sb.rpc('uniform_admin_lookup_member', {
+        p_unit_id: unitId,
+        p_capid: capid
+      });
+      if (error) throw error;
+      const member = Array.isArray(data) ? data[0] : data;
+      if (!member) {
+        newUserLookupResultData = null;
+        const result = $('newUserLookupResult');
+        if (result) {
+          result.className = 'member-lookup-result error';
+          result.innerHTML = `<strong>No member found.</strong><span>No CAP member matches CAPID ${escapeHtml(capid)}.</span>`;
+        }
+        if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = true;
+        return null;
+      }
+
+      newUserLookupResultData = member;
+      const name = [member.first_name, member.last_name].filter(Boolean).join(' ').trim();
+      if ($('newUserName')) {
+        $('newUserName').value = name;
+        $('newUserName').readOnly = true;
+      }
+
+      const result = $('newUserLookupResult');
+      const selectedUnit = unitsCache.find(u => String(u.id) === String(unitId));
+      const memberHome = unitsCache.find(u => String(u.id) === String(member.primary_unit_id || ''));
+      let headline = `${escapeHtml(name)} · CAPID ${escapeHtml(member.capid)}`;
+      let detail = `${escapeHtml(member.current_grade || 'Grade not listed')}`;
+      if (memberHome) detail += ` · CAP membership unit: ${escapeHtml(memberHome.charter_number || memberHome.name)}`;
+
+      let stateClass = 'success';
+      let statusText = '';
+      let blockSubmit = false;
+
+      if (member.selected_unit_role === 'application_admin' || member.is_app_admin) {
+        stateClass = 'warning';
+        statusText = 'This member is already an Application Admin and already has access to every unit.';
+        blockSubmit = true;
+      } else if (member.selected_unit_role === 'unit_admin') {
+        stateClass = 'warning';
+        statusText = `This member is already a Unit Admin for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
+        blockSubmit = true;
+      } else if (member.selected_unit_role === 'inspector') {
+        stateClass = 'warning';
+        statusText = `This member is already an Inspector for ${escapeHtml(selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit')}.`;
+        blockSubmit = true;
+      } else if (member.has_shared_account) {
+        statusText = member.has_uniform_access_any
+          ? 'An existing Uniform Inspection account was found. Adding this unit will extend the existing account; no new account or password is needed.'
+          : 'An existing shared CAP Applications account was found. You can authorize it for this unit; no new account or password is needed.';
+      } else {
+        statusText = 'No shared CAP Applications account is linked to this CAPID yet. Enter an email and temporary password to create the account.';
+      }
+
+      if (result) {
+        result.className = `member-lookup-result ${stateClass}`;
+        result.innerHTML = `<strong>${headline}</strong><span>${detail}</span><span>${statusText}</span>`;
+      }
+
+      if ($('newUserEmail')) {
+        $('newUserEmail').disabled = Boolean(member.has_shared_account);
+        if (member.has_shared_account) $('newUserEmail').value = '';
+      }
+      if ($('newUserPassword')) {
+        $('newUserPassword').disabled = Boolean(member.has_shared_account);
+        if (member.has_shared_account) $('newUserPassword').value = '';
+      }
+      if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = blockSubmit;
+      setMessage('userMessage', '', '');
+      return member;
+    } catch (err) {
+      newUserLookupResultData = null;
+      if (!quiet) setMessage('userMessage', err.message || String(err), 'error');
+      return null;
+    } finally {
+      if (button) { button.disabled = false; button.textContent = 'Find CAP Member'; }
+    }
   }
 
   async function handleCreateUser(e) {
     e.preventDefault();
-    if (!isApplicationAdmin()) return;
-    const role = $('newUserRole').value;
+    if (!canAdministerUniform()) return;
+
+    const capid = $('newUserCapid')?.value.trim() || '';
+    if (!capid) return setMessage('userMessage', 'Enter a CAPID.', 'error');
+
+    let lookup = newUserLookupResultData;
+    if (!lookup || String(lookup.capid) !== capid) lookup = await lookupNewUserByCapid({ quiet: true });
+    if (!lookup) return setMessage('userMessage', 'Find the CAP member before adding access.', 'error');
+
+    if (['inspector','unit_admin','application_admin'].includes(lookup.selected_unit_role)) {
+      return setMessage('userMessage', 'This member already has access at this level for the selected unit.', 'error');
+    }
+
+    const appAdmin = isApplicationAdmin();
+    const role = appAdmin ? $('newUserRole').value : 'inspector';
+    const unitId = appAdmin
+      ? (role === 'application_admin' ? null : ($('newUserUnit')?.value || null))
+      : ($('adminManagedUnitFilter')?.value || null);
+    const homeUnitId = appAdmin
+      ? ($('newUserHomeUnit')?.value || null)
+      : ($('adminManagedUnitFilter')?.value || null);
+
     const payload = {
+      capid,
       display_name: $('newUserName').value.trim(),
-      email: $('newUserEmail').value.trim().toLowerCase(),
-      password: $('newUserPassword').value,
+      email: $('newUserEmail').disabled ? '' : $('newUserEmail').value.trim().toLowerCase(),
+      password: $('newUserPassword').disabled ? '' : $('newUserPassword').value,
       role,
-      unit_id: role === 'application_admin' ? null : ($('newUserUnit')?.value || null),
-      home_unit_id: $('newUserHomeUnit')?.value || null
+      unit_id: unitId,
+      home_unit_id: homeUnitId
     };
+
     setMessage('userMessage', '', '');
-    if (!payload.home_unit_id) return setMessage('userMessage', 'Choose a Home Unit.', 'error');
-    if (role !== 'application_admin' && !payload.unit_id) return setMessage('userMessage', 'Choose the unit for the initial Inspector or Unit Admin access.', 'error');
+
+    if (!homeUnitId) return setMessage('userMessage', 'Choose a Home Unit.', 'error');
+    if (role !== 'application_admin' && !unitId) return setMessage('userMessage', 'Choose the unit for this access.', 'error');
+    if (!lookup.has_shared_account && !payload.email) return setMessage('userMessage', 'Enter an email address for the new shared CAP account.', 'error');
+
+    const button = $('createUserSubmitBtn');
+    if (button) { button.disabled = true; button.textContent = lookup.has_shared_account ? 'Adding Access…' : 'Creating Account…'; }
+
     try {
-      await createUser(payload);
-      setMessage('userMessage', `Authorized ${payload.email} for Uniform Inspections.`, 'success');
+      const result = await createUser(payload);
+      const unit = unitsCache.find(u => String(u.id) === String(unitId || homeUnitId));
+      const scope = role === 'application_admin' ? 'Application Admin' : `${profileRoleLabel({ role, is_app_admin: role === 'application_admin', is_unit_admin: role === 'unit_admin' })} for ${unit ? unitOptionLabel(unit) : 'the selected unit'}`;
+      setMessage('userMessage', `${result?.member_name || payload.display_name} authorized as ${scope}.`, 'success');
+      toast(result?.created_new_account ? 'Account created and access granted' : 'Existing account access updated');
       $('createUserForm').reset();
+      resetNewUserLookup();
       populateUnitSelectors();
       updateNewUserRoleUI();
       await refreshUsers();
     } catch (err) {
       setMessage('userMessage', err.message || String(err), 'error');
+    } finally {
+      if (button) { button.disabled = false; button.textContent = 'Create / Authorize User'; }
     }
   }
 
@@ -1487,7 +1698,7 @@
 
   async function listProfiles() {
     if (isDemo) return loadLS(LS.users, []).map(stripPassword).sort((a,b) => (a.display_name || '').localeCompare(b.display_name || ''));
-    const { data, error } = await sb.rpc('uniform_admin_list_users');
+    const { data, error } = await sb.rpc('uniform_admin_list_users_v2');
     if (error) throw error;
     return data || [];
   }
@@ -1511,6 +1722,7 @@
     const { data, error } = await sb.functions.invoke('uniform-admin-users', { body: payload });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
+    return data;
   }
 
   async function saveInspectionLocalFirst(cadet, row) {
