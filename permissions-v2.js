@@ -27,7 +27,15 @@
     .permission-key { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 12px; color: var(--muted); font-size: .76rem; line-height: 1.4; }
     .permission-key strong { color: var(--navy-900); }
     .permission-table select { min-width: 150px; min-height: 34px; }
-    .permission-table td:nth-child(3) select { min-width: 220px; }
+    .permission-table td:nth-child(4) select { min-width: 220px; }
+    .admin-inline-name { display: grid; grid-template-columns: minmax(105px,1fr) minmax(105px,1fr); gap: 5px; min-width: 225px; }
+    .admin-inline-input { width: 100%; min-width: 100px; min-height: 32px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: #fff; font: inherit; }
+    .admin-inline-input::placeholder { color: #7b8792; }
+    .admin-inline-input.saving { opacity: .62; }
+    .admin-inline-input.saved { outline: 2px solid rgba(39,122,74,.18); }
+    .admin-inline-input.save-error { outline: 2px solid rgba(168,50,50,.25); }
+    .admin-inline-caption { display: block; margin-top: 4px; color: var(--muted); font-size: .68rem; }
+    .permission-table .admin-unit-role { min-width: 135px; }
     .permission-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; }
     .permission-toggle input { width: auto; min-height: auto; }
     .permission-badge { display: inline-block; padding: 4px 7px; border-radius: 999px; background: #e9eef3; font-size: .7rem; font-weight: 900; }
@@ -144,7 +152,7 @@
         <div>
           <div class="page-kicker">ADMINISTRATION</div>
           <h1>Administration</h1>
-          <p>Manage Uniform Inspection access. Unit Admins manage Inspectors for their assigned units; Application Admins manage all access, home units, users, and grading standards.</p>
+          <p>Manage Uniform Inspection access. Unit Admins can manage both Inspectors and other Unit Admins for their assigned units; Application Admins manage all access, shared account details, home units, users, and grading standards.</p>
         </div>
       </div>
 
@@ -170,7 +178,7 @@
 
           <div class="permission-key">
             <span><strong>Inspector</strong> can inspect and report on that unit.</span>
-            <span><strong>Unit Admin</strong> can also grant or remove Inspector access for that unit.</span>
+            <span><strong>Unit Admin</strong> can grant, remove, or change Inspector and Unit Admin access for that unit.</span>
             <span><strong>Application Admin</strong> has full access to every unit.</span>
           </div>
 
@@ -178,17 +186,16 @@
             <table class="permission-table">
               <thead>
                 <tr>
-                  <th>User</th>
+                  <th>Name</th>
                   <th>CAPID</th>
                   <th>Email</th>
                   <th>Home Unit</th>
                   <th>Selected Unit Access</th>
                   <th>Application Admin</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody id="usersTableBody">
-                <tr><td colspan="7">Loading users…</td></tr>
+                <tr><td colspan="6">Loading users…</td></tr>
               </tbody>
             </table>
           </div>
