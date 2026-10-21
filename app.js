@@ -1480,22 +1480,18 @@
   }
 
   async function persistInlineIdentity(row, userId, changedInput) {
-    if (!navigator.onLine && !isDemo) throw new Error('Account changes require an internet connection.');
-    const user = adminUsersCache.find(x => String(x.id) === String(userId));
-    if (!user) throw new Error('User account could not be found.');
-
-    const firstName = row.querySelector('[data-field="first_name"]')?.value.trim() ?? (user.first_name || '');
-    const lastName = row.querySelector('[data-field="last_name"]')?.value.trim() ?? (user.last_name || '');
-    const capid = row.querySelector('[data-field="capid"]')?.value.trim() ?? (user.capid || '');
-    const email = row.querySelector('[data-field="email"]')?.value.trim().toLowerCase() ?? (user.email || '');
-    if (!email) {
-      changedInput.classList.add('save-error');
-      throw new Error('Email cannot be blank.');
-    }
-
-    const displayName = `${firstName} ${lastName}`.trim() || user.display_name || email;
-
     try {
+      if (!navigator.onLine && !isDemo) throw new Error('Account changes require an internet connection.');
+      const user = adminUsersCache.find(x => String(x.id) === String(userId));
+      if (!user) throw new Error('User account could not be found.');
+
+      const firstName = row.querySelector('[data-field="first_name"]')?.value.trim() ?? (user.first_name || '');
+      const lastName = row.querySelector('[data-field="last_name"]')?.value.trim() ?? (user.last_name || '');
+      const capid = row.querySelector('[data-field="capid"]')?.value.trim() ?? (user.capid || '');
+      const email = row.querySelector('[data-field="email"]')?.value.trim().toLowerCase() ?? (user.email || '');
+      if (!email) throw new Error('Email cannot be blank.');
+
+      const displayName = `${firstName} ${lastName}`.trim() || user.display_name || email;
       const { data, error } = await sb.functions.invoke('uniform-admin-users', {
         body: {
           action: 'update_identity',
@@ -1531,7 +1527,6 @@
       changedInput.classList.add('save-error');
       toast(err.message || String(err));
       await refreshUsers();
-      throw err;
     }
   }
 
