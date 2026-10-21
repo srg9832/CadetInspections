@@ -40,6 +40,17 @@
     .member-lookup-result.success { border-left-color: var(--success); background: var(--success-bg); }
     .member-lookup-result.warning { border-left-color: #b7791f; background: #fff8e6; }
     .member-lookup-result.error { border-left-color: var(--danger); background: var(--danger-bg); }
+    .password-dialog { width: min(520px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 22px 60px rgba(0,0,0,.28); }
+    .password-dialog::backdrop { background: rgba(5,18,31,.68); }
+    .password-dialog form { display: grid; gap: 14px; padding: 20px; }
+    .password-dialog-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .password-dialog-head h2 { margin: 0 0 5px; }
+    .password-dialog-head p { margin: 0; color: var(--muted); }
+    .password-dialog-close { border: 0; background: transparent; font-size: 1.55rem; cursor: pointer; }
+    .password-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .password-dialog.force-change .password-dialog-close,
+    .password-dialog.force-change #passwordChangeCancelBtn { display: none; }
+    .password-dialog.force-change #passwordChangeTitle::after { content: " Required"; color: var(--danger); font-size: .72em; }
     .unit-admin-add-scope { margin: -2px 0 4px; padding: 9px 11px; border-radius: 5px; background: #eef4f8; color: var(--navy-900); font-size: .8rem; font-weight: 800; }
     @media (max-width: 1080px) {
       .app-header { flex-wrap: wrap; }
@@ -69,6 +80,41 @@
       </div>
     `;
     headerUser.before(control);
+  }
+
+  const headerUserBox = document.querySelector('.app-header .header-user');
+  if (headerUserBox && !document.getElementById('changePasswordBtn')) {
+    const changePasswordBtn = document.createElement('button');
+    changePasswordBtn.id = 'changePasswordBtn';
+    changePasswordBtn.className = 'header-button';
+    changePasswordBtn.type = 'button';
+    changePasswordBtn.textContent = 'Change Password';
+    headerUserBox.insertBefore(changePasswordBtn, document.getElementById('logoutBtn'));
+  }
+
+  if (!document.getElementById('passwordChangeDialog')) {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'passwordChangeDialog';
+    dialog.className = 'password-dialog';
+    dialog.innerHTML = `
+      <form id="passwordChangeForm">
+        <div class="password-dialog-head">
+          <div>
+            <h2 id="passwordChangeTitle">Change Password</h2>
+            <p id="passwordChangeHelp">Choose a new password for your shared CAP Applications login.</p>
+          </div>
+          <button id="passwordChangeCloseBtn" type="button" class="password-dialog-close">×</button>
+        </div>
+        <label class="field"><span>New Password</span><input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label class="field"><span>Confirm New Password</span><input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <p id="passwordChangeMessage" class="form-message"></p>
+        <div class="password-dialog-actions">
+          <button id="passwordChangeCancelBtn" type="button" class="secondary">Cancel</button>
+          <button id="passwordChangeSaveBtn" type="submit" class="primary">Change Password</button>
+        </div>
+      </form>
+    `;
+    document.body.appendChild(dialog);
   }
 
   const inspectionUnit = document.getElementById('inspectionUnit');
@@ -150,44 +196,55 @@
         </section>
 
         <form id="createUserForm" class="app-panel stack">
+          <input id="newUserId" type="hidden" />
           <div class="panel-heading">
             <div>
               <h2 id="newUserFormTitle">Add / Authorize User</h2>
-              <p id="newUserFormHelp">Start with CAPID so the application can find the member and prevent duplicate accounts.</p>
+              <p id="newUserFormHelp">Check CAPID or email first. Shared login accounts are separate from the inspection/member roster.</p>
             </div>
           </div>
 
           <p id="unitAdminAddScope" class="unit-admin-add-scope hidden"></p>
 
-          <div class="capid-lookup-row">
+          <div class="create-user-grid">
             <label class="field">
-              <span>CAPID *</span>
-              <input id="newUserCapid" inputmode="numeric" maxlength="12" placeholder="123456" required />
-              <small>CAPID is the unique person identifier used to find an existing shared account before creating a new one.</small>
+              <span>CAPID <small>(optional)</small></span>
+              <input id="newUserCapid" inputmode="numeric" maxlength="12" placeholder="123456" />
+              <small>Used only to identify this shared login account. It does not link the login to inspection/member records.</small>
             </label>
-            <button id="lookupMemberBtn" class="secondary" type="button">Find CAP Member</button>
+            <label class="field">
+              <span>Email *</span>
+              <input id="newUserEmail" type="email" placeholder="member@example.com" required />
+              <small>All CAP applications use the same Supabase login email.</small>
+            </label>
+            <label class="field">
+              <span>First Name</span>
+              <input id="newUserFirstName" placeholder="John" />
+            </label>
+            <label class="field">
+              <span>Last Name</span>
+              <input id="newUserLastName" placeholder="Smith" />
+            </label>
+            <label class="field">
+              <span>Display Name</span>
+              <input id="newUserName" placeholder="John Smith" />
+              <small>Leave blank to use First + Last.</small>
+            </label>
+            <label id="newUserPasswordField" class="field">
+              <span>Temporary Password <small>(new accounts only)</small></span>
+              <input id="newUserPassword" type="password" minlength="8" />
+              <small>New accounts will be required to change this after their first login.</small>
+            </label>
+          </div>
+
+          <div class="admin-form-actions" style="justify-content:flex-start">
+            <button id="lookupMemberBtn" class="secondary" type="button">Check Existing Account</button>
+            <button id="clearUserFormBtn" class="secondary" type="button">Clear</button>
           </div>
 
           <div id="newUserLookupResult" class="member-lookup-result hidden"></div>
 
           <div class="create-user-grid">
-            <label class="field">
-              <span>Display Name</span>
-              <input id="newUserName" required placeholder="Filled from CAPID lookup" />
-            </label>
-
-            <label id="newUserEmailField" class="field">
-              <span>Email</span>
-              <input id="newUserEmail" type="email" />
-              <small>Only needed when this CAPID does not already have a shared CAP Applications account.</small>
-            </label>
-
-            <label id="newUserPasswordField" class="field">
-              <span>Temporary Password <small>(new accounts only)</small></span>
-              <input id="newUserPassword" type="password" minlength="8" />
-              <small>Existing shared accounts keep their current login and do not need a password here.</small>
-            </label>
-
             <label id="newUserRoleField" class="field">
               <span>Access Level</span>
               <select id="newUserRole">
@@ -200,7 +257,7 @@
             <label id="newUserHomeField" class="field">
               <span>Home Unit *</span>
               <select id="newUserHomeUnit" required><option value="">Select unit...</option></select>
-              <small id="newUserHomeHint">This is the permanent unit selected whenever the user opens the application.</small>
+              <small id="newUserHomeHint">This is the permanent unit selected whenever the user opens Uniform Inspections.</small>
             </label>
 
             <label id="newUserUnitField" class="field">
