@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'cap-uniform-pwa-v7.0.0';
+const CACHE_VERSION = 'cap-uniform-pwa-v8.0.0';
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -8,11 +8,11 @@ const LOCAL_APP_FILES = [
   './',
   './index.html',
   './app.js',
-  './app.js?v=7.0.0',
+  './app.js?v=8.0.0',
   './permissions-v2.js',
-  './permissions-v2.js?v=7.0.0',
+  './permissions-v2.js?v=8.0.0',
   './offline-store.js',
-  './offline-store.js?v=7.0.0',
+  './offline-store.js?v=8.0.0',
   './config.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
