@@ -33,6 +33,14 @@
     .permission-badge { display: inline-block; padding: 4px 7px; border-radius: 999px; background: #e9eef3; font-size: .7rem; font-weight: 900; }
     .permission-badge.app-admin { color: #4d2d78; background: #f1eafd; }
     .create-user-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+    .capid-lookup-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
+    .member-lookup-result { display: grid; gap: 4px; padding: 11px 13px; border: 1px solid var(--border); border-left: 4px solid #2f6f9f; border-radius: 6px; background: #f7fafc; font-size: .8rem; line-height: 1.4; }
+    .member-lookup-result strong { color: var(--navy-950); }
+    .member-lookup-result span { color: var(--muted); }
+    .member-lookup-result.success { border-left-color: var(--success); background: var(--success-bg); }
+    .member-lookup-result.warning { border-left-color: #b7791f; background: #fff8e6; }
+    .member-lookup-result.error { border-left-color: var(--danger); background: var(--danger-bg); }
+    .unit-admin-add-scope { margin: -2px 0 4px; padding: 9px 11px; border-radius: 5px; background: #eef4f8; color: var(--navy-900); font-size: .8rem; font-weight: 800; }
     @media (max-width: 1080px) {
       .app-header { flex-wrap: wrap; }
       .working-unit-control { order: 3; width: 100%; min-width: 0; grid-template-columns: 1fr auto; }
@@ -125,6 +133,7 @@
               <thead>
                 <tr>
                   <th>User</th>
+                  <th>CAPID</th>
                   <th>Email</th>
                   <th>Home Unit</th>
                   <th>Selected Unit Access</th>
@@ -133,45 +142,76 @@
                 </tr>
               </thead>
               <tbody id="usersTableBody">
-                <tr><td colspan="6">Loading users…</td></tr>
+                <tr><td colspan="7">Loading users…</td></tr>
               </tbody>
             </table>
           </div>
           <p id="adminAccessMessage" class="form-message"></p>
         </section>
 
-        <form id="createUserForm" class="app-panel stack app-admin-only">
+        <form id="createUserForm" class="app-panel stack">
           <div class="panel-heading">
             <div>
-              <h2>Add / Authorize User</h2>
-              <p>Create a new shared CAP Applications account or authorize an existing account for Uniform Inspections.</p>
+              <h2 id="newUserFormTitle">Add / Authorize User</h2>
+              <p id="newUserFormHelp">Start with CAPID so the application can find the member and prevent duplicate accounts.</p>
             </div>
           </div>
-          <div class="create-user-grid">
-            <label class="field"><span>Display Name</span><input id="newUserName" required /></label>
-            <label class="field"><span>Email</span><input id="newUserEmail" type="email" required /></label>
-            <label class="field"><span>Temporary Password <small>(new shared accounts only)</small></span><input id="newUserPassword" type="password" minlength="8" /><small>Leave blank when the shared CAP account already exists.</small></label>
+
+          <p id="unitAdminAddScope" class="unit-admin-add-scope hidden"></p>
+
+          <div class="capid-lookup-row">
             <label class="field">
-              <span>Initial Access Level</span>
+              <span>CAPID *</span>
+              <input id="newUserCapid" inputmode="numeric" maxlength="12" placeholder="123456" required />
+              <small>CAPID is the unique person identifier used to find an existing shared account before creating a new one.</small>
+            </label>
+            <button id="lookupMemberBtn" class="secondary" type="button">Find CAP Member</button>
+          </div>
+
+          <div id="newUserLookupResult" class="member-lookup-result hidden"></div>
+
+          <div class="create-user-grid">
+            <label class="field">
+              <span>Display Name</span>
+              <input id="newUserName" required placeholder="Filled from CAPID lookup" />
+            </label>
+
+            <label id="newUserEmailField" class="field">
+              <span>Email</span>
+              <input id="newUserEmail" type="email" />
+              <small>Only needed when this CAPID does not already have a shared CAP Applications account.</small>
+            </label>
+
+            <label id="newUserPasswordField" class="field">
+              <span>Temporary Password <small>(new accounts only)</small></span>
+              <input id="newUserPassword" type="password" minlength="8" />
+              <small>Existing shared accounts keep their current login and do not need a password here.</small>
+            </label>
+
+            <label id="newUserRoleField" class="field">
+              <span>Access Level</span>
               <select id="newUserRole">
                 <option value="inspector">Inspector</option>
                 <option value="unit_admin">Unit Admin</option>
                 <option value="application_admin">Application Admin</option>
               </select>
             </label>
-            <label class="field">
+
+            <label id="newUserHomeField" class="field">
               <span>Home Unit *</span>
               <select id="newUserHomeUnit" required><option value="">Select unit...</option></select>
-              <small>This permanent unit is selected whenever the user opens the application.</small>
+              <small id="newUserHomeHint">This is the permanent unit selected whenever the user opens the application.</small>
             </label>
-            <label class="field">
+
+            <label id="newUserUnitField" class="field">
               <span>Initial Unit Access</span>
               <select id="newUserUnit"><option value="">Select unit...</option></select>
               <small id="newUserUnitHint">Choose the unit where this user will initially be authorized.</small>
             </label>
           </div>
+
           <div class="admin-form-actions">
-            <button class="primary" type="submit">Create / Authorize User</button>
+            <button id="createUserSubmitBtn" class="primary" type="submit">Create / Authorize User</button>
             <span id="userMessage" class="form-message"></span>
           </div>
         </form>
