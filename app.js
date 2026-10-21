@@ -15,6 +15,8 @@
   let adminUsersCache = [];
   let adminUnitRolesCache = [];
   let newUserLookupResultData = null;
+  let capidLookupTimer = null;
+  let capidLookupSerial = 0;
   const adminInlineSaveChains = new Map();
   let workingUnitId = null;
   let bulkRowSerial = 0;
@@ -269,9 +271,15 @@
     $('exportAllBtn').addEventListener('click', exportAllCSV);
     $('exportInspectorBtn').addEventListener('click', exportInspectorAnalysisCSV);
     $('createUserForm')?.addEventListener('submit', handleCreateUser);
-    $('lookupMemberBtn')?.addEventListener('click', () => lookupNewUserAccount());
     $('clearUserFormBtn')?.addEventListener('click', clearNewUserForm);
-    $('newUserCapid')?.addEventListener('input', resetNewUserLookup);
+    $('newUserCapid')?.addEventListener('input', handleCapidLookupInput);
+    $('newUserCapid')?.addEventListener('blur', () => runAutomaticCapidLookup(true));
+    $('newUserCapid')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runAutomaticCapidLookup(true);
+      }
+    });
     $('newUserEmail')?.addEventListener('input', resetNewUserLookup);
     $('newUserRole')?.addEventListener('change', () => { resetNewUserLookup(); updateNewUserRoleUI(); });
     $('newUserUnit')?.addEventListener('change', resetNewUserLookup);
@@ -1530,6 +1538,128 @@
     }
   }
 
+  function clearAutoFilledUserFields() {
+    if (!newUserLookupResultData?.found) return;
+    if ($('newUserId')) $('newUserId').value = '';
+    ['newUserEmail','newUserFirstName','newUserLastName','newUserName'].forEach(id => {
+      const el = $(id);
+      if (!el) return;
+      el.value = '';
+      el.readOnly = false;
+    });
+    if ($('newUserPassword')) {
+      $('newUserPassword').value = '';
+      $('newUserPassword').disabled = false;
+    }
+  }
+
+  function handleCapidLookupInput() {
+    clearTimeout(capidLookupTimer);
+    capidLookupSerial += 1;
+    clearAutoFilledUserFields();
+    resetNewUserLookup();
+
+    const capid = $('newUserCapid')?.value.trim() || '';
+    if (!capid) return;
+
+    // CAPIDs are normally six digits; wait until the user appears finished
+    // to avoid querying on every keystroke. Blur/Enter still checks any length.
+    if (capid.length >= 6) {
+      const serial = capidLookupSerial;
+      capidLookupTimer = setTimeout(() => {
+        if (serial === capidLookupSerial) runAutomaticCapidLookup(false);
+      }, 450);
+    }
+  }
+
+  async function runAutomaticCapidLookup(immediate = false) {
+    clearTimeout(capidLookupTimer);
+    const serial = ++capidLookupSerial;
+    const capid = $('newUserCapid')?.value.trim() || '';
+    if (!capid) return;
+
+    const unitId = selectedUnitForUserProvisioning();
+    if (!unitId || !navigator.onLine || isDemo) return;
+
+    try {
+      const { data, error } = await sb.functions.invoke('uniform-admin-users', {
+        body: { action: 'lookup', unit_id: unitId, capid, email: '' }
+      });
+      if (serial !== capidLookupSerial) return;
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const result = $('newUserLookupResult');
+
+      if (!data?.found) {
+        // No modal/toast for a miss: the blank form is the cue to create a user.
+        clearAutoFilledUserFields();
+        newUserLookupResultData = { found: false, capid };
+        if ($('newUserId')) $('newUserId').value = '';
+        if (result) {
+          result.className = 'member-lookup-result hidden';
+          result.innerHTML = '';
+        }
+        if ($('newUserPassword')) $('newUserPassword').disabled = false;
+        if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = false;
+        return;
+      }
+
+      newUserLookupResultData = data;
+      if ($('newUserId')) $('newUserId').value = data.user_id || '';
+      if ($('newUserCapid') && data.capid) $('newUserCapid').value = data.capid;
+      if ($('newUserEmail')) $('newUserEmail').value = data.email || '';
+      if ($('newUserFirstName')) $('newUserFirstName').value = data.first_name || '';
+      if ($('newUserLastName')) $('newUserLastName').value = data.last_name || '';
+      if ($('newUserName')) $('newUserName').value = data.display_name || '';
+
+      if ($('newUserPassword')) {
+        $('newUserPassword').value = '';
+        $('newUserPassword').disabled = true;
+      }
+
+      if (!isApplicationAdmin()) {
+        ['newUserCapid','newUserEmail','newUserFirstName','newUserLastName','newUserName'].forEach(id => {
+          if ($(id)) $(id).readOnly = true;
+        });
+      }
+
+      const selectedUnit = unitsCache.find(u => String(u.id) === String(unitId));
+      let blockSubmit = false;
+      let statusText = '';
+
+      if (data.selected_unit_role === 'application_admin') {
+        blockSubmit = true;
+        statusText = 'This account is already an Application Admin and already has access to every Uniform Inspection unit.';
+      } else if (data.selected_unit_role === 'unit_admin') {
+        blockSubmit = true;
+        statusText = `This account is already a Unit Admin for ${selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit'}.`;
+      } else if (data.selected_unit_role === 'inspector') {
+        blockSubmit = true;
+        statusText = `This account is already an Inspector for ${selectedUnit ? unitOptionLabel(selectedUnit) : 'this unit'}.`;
+      }
+
+      if (result) {
+        if (statusText) {
+          result.className = 'member-lookup-result warning';
+          result.innerHTML = `<strong>${escapeHtml(data.display_name || data.email || 'Existing account')}</strong><span>${escapeHtml(statusText)}</span>`;
+        } else {
+          result.className = 'member-lookup-result hidden';
+          result.innerHTML = '';
+        }
+      }
+
+      if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = blockSubmit;
+
+      const foundName = data.display_name || [data.first_name, data.last_name].filter(Boolean).join(' ') || data.email || 'Existing account';
+      toast(`User Found — ${foundName}`);
+    } catch (err) {
+      if (serial !== capidLookupSerial) return;
+      // Lookup failures that are real errors should still be visible.
+      setMessage('userMessage', err.message || String(err), 'error');
+    }
+  }
+
   function resetNewUserLookup() {
     newUserLookupResultData = null;
     const result = $('newUserLookupResult');
@@ -1590,7 +1720,7 @@
 
     if ($('newUserFormTitle')) $('newUserFormTitle').textContent = appAdmin ? 'Add / Authorize User' : 'Add User to Unit';
     if ($('newUserFormHelp')) $('newUserFormHelp').textContent = appAdmin
-      ? 'CAPID is optional. Check CAPID or email to reuse an existing shared CAP Applications login before creating a new one.'
+      ? 'Enter a CAPID first. Existing shared login accounts are found automatically; otherwise complete the blank fields to create a new login.'
       : 'Add an Inspector or another Unit Admin to the unit selected above. Existing shared accounts are reused without exposing the application-wide user directory.';
     if ($('newUserUnitHint')) $('newUserUnitHint').textContent = appAdmin
       ? (needsUnit ? 'Choose the unit where this user will initially be authorized.' : 'Application Admins can access every Uniform Inspection unit.')
@@ -1626,8 +1756,6 @@
       return null;
     }
 
-    const button = $('lookupMemberBtn');
-    if (button) { button.disabled = true; button.textContent = 'Checking…'; }
     try {
       const { data, error } = await sb.functions.invoke('uniform-admin-users', {
         body: { action: 'lookup', unit_id: unitId, capid, email }
@@ -1639,8 +1767,8 @@
       if (!data?.found) {
         newUserLookupResultData = { found: false };
         if (result) {
-          result.className = 'member-lookup-result success';
-          result.innerHTML = '<strong>No existing shared login found.</strong><span>Complete the name, email, and temporary password to create a new account. CAPID may be left blank.</span>';
+          result.className = 'member-lookup-result hidden';
+          result.innerHTML = '';
         }
         if ($('newUserId')) $('newUserId').value = '';
         return newUserLookupResultData;
@@ -1687,13 +1815,13 @@
       }
       if ($('createUserSubmitBtn')) $('createUserSubmitBtn').disabled = blockSubmit;
       setMessage('userMessage', '', '');
+      toast(`User Found — ${data.display_name || data.email || 'Existing account'}`);
       return data;
     } catch (err) {
       newUserLookupResultData = null;
       if (!quiet) setMessage('userMessage', err.message || String(err), 'error');
       return null;
     } finally {
-      if (button) { button.disabled = false; button.textContent = 'Check Existing Account'; }
     }
   }
 
