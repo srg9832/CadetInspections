@@ -282,7 +282,10 @@
     });
     $('newUserEmail')?.addEventListener('input', resetNewUserLookup);
     $('newUserRole')?.addEventListener('change', () => { resetNewUserLookup(); updateNewUserRoleUI(); });
-    $('newUserUnit')?.addEventListener('change', resetNewUserLookup);
+    $('newUserUnit')?.addEventListener('change', () => {
+      resetNewUserLookup();
+      if ($('newUserCapid')?.value.trim()) runAutomaticCapidLookup(true);
+    });
     $('newUserHomeUnit')?.addEventListener('change', resetNewUserLookup);
     $('changePasswordBtn')?.addEventListener('click', () => openPasswordChange(false));
     $('passwordChangeCloseBtn')?.addEventListener('click', closePasswordChange);
@@ -292,6 +295,7 @@
       resetNewUserLookup();
       updateNewUserRoleUI();
       renderAdminAccessTable();
+      if ($('newUserCapid')?.value.trim()) runAutomaticCapidLookup(true);
     });
     $('adminUserSearch')?.addEventListener('input', renderAdminAccessTable);
     $('bulkAddRowBtn').addEventListener('click', () => addBulkRow());
