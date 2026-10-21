@@ -1690,7 +1690,7 @@
 
   function setupPWA() {
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js').catch(err => console.warn('Service worker registration failed:', err)));
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v4.js').catch(err => console.warn('Service worker registration failed:', err)));
     }
     window.addEventListener('beforeinstallprompt', event => {
       event.preventDefault();
