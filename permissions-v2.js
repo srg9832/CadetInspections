@@ -34,8 +34,15 @@
     .admin-inline-input.saving { opacity: .62; }
     .admin-inline-input.saved { outline: 2px solid rgba(39,122,74,.18); }
     .admin-inline-input.save-error { outline: 2px solid rgba(168,50,50,.25); }
-    .admin-inline-caption { display: block; margin-top: 4px; color: var(--muted); font-size: .68rem; }
     .permission-table .admin-unit-role { min-width: 135px; }
+    .admin-remove-unit { white-space: nowrap; border-color: #c96969; color: #8f2929; background: #fff; }
+    .admin-remove-unit:hover { background: #fff3f3; }
+    .remove-unit-dialog { width: min(520px, calc(100vw - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 22px 60px rgba(0,0,0,.28); }
+    .remove-unit-dialog::backdrop { background: rgba(5,18,31,.68); }
+    .remove-unit-dialog form { display: grid; gap: 14px; padding: 20px; }
+    .remove-unit-dialog h2 { margin: 0; }
+    .remove-unit-dialog p { margin: 0; color: var(--muted); line-height: 1.45; }
+    .remove-unit-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .permission-toggle { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; }
     .permission-toggle input { width: auto; min-height: auto; }
     .permission-badge { display: inline-block; padding: 4px 7px; border-radius: 999px; background: #e9eef3; font-size: .7rem; font-weight: 900; }
@@ -125,6 +132,24 @@
     document.body.appendChild(dialog);
   }
 
+  if (!document.getElementById('removeUnitDialog')) {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'removeUnitDialog';
+    dialog.className = 'remove-unit-dialog';
+    dialog.innerHTML = `
+      <form method="dialog">
+        <h2>Remove from Unit?</h2>
+        <p id="removeUnitDialogText"></p>
+        <p><strong>This only removes Uniform Inspection access for this unit.</strong> The shared CAP Applications login and access to Schedule, Leadership Feedback, Drill Tests, and any other Uniform units are not deleted.</p>
+        <div class="remove-unit-actions">
+          <button id="removeUnitCancelBtn" class="secondary" type="button">Cancel</button>
+          <button id="removeUnitConfirmBtn" class="primary" type="button">Remove from Unit</button>
+        </div>
+      </form>
+    `;
+    document.body.appendChild(dialog);
+  }
+
   const inspectionUnit = document.getElementById('inspectionUnit');
   if (inspectionUnit && !document.getElementById('inspectionSetWorkingUnitBtn')) {
     const button = document.createElement('button');
@@ -192,10 +217,11 @@
                   <th>Home Unit</th>
                   <th>Selected Unit Access</th>
                   <th>Application Admin</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="usersTableBody">
-                <tr><td colspan="6">Loading users…</td></tr>
+                <tr><td colspan="7">Loading users…</td></tr>
               </tbody>
             </table>
           </div>
