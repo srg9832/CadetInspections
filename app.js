@@ -286,6 +286,11 @@
     $('dashboardDateRange').addEventListener('change', () => { toggleCustomDates('dashboard'); renderDashboard(); });
     $('dashboardStartDate').addEventListener('change', renderDashboard);
     $('dashboardEndDate').addEventListener('change', renderDashboard);
+    $('myEntriesUnitFilter').addEventListener('change', renderMyEntries);
+    $('myEntriesDateRange').addEventListener('change', () => { toggleCustomDates('myEntries'); renderMyEntries(); });
+    $('myEntriesStartDate').addEventListener('change', renderMyEntries);
+    $('myEntriesEndDate').addEventListener('change', renderMyEntries);
+    $('exportMyEntriesBtn').addEventListener('click', exportMyEntriesCSV);
     $('inspectorUnitFilter').addEventListener('change', renderInspectorAnalysis);
     $('inspectorDateRange').addEventListener('change', () => { toggleCustomDates('inspector'); renderInspectorAnalysis(); });
     $('inspectorStartDate').addEventListener('change', renderInspectorAnalysis);
@@ -695,6 +700,7 @@
       if ($('historyCadetSelect').value) renderSelectedCadetHistory();
     }
     if (reportId === 'dashboardView') renderDashboard();
+    if (reportId === 'myEntriesView') renderMyEntries();
     if (reportId === 'inspectorView') renderInspectorAnalysis();
   }
 
@@ -1150,6 +1156,186 @@
       const c = inspectionCadet(i, cadets);
       return `<tr><td>${formatDate(i.inspection_date)}</td><td>${escapeHtml(unitLabelForInspection(i))}</td><td>${escapeHtml(c.capid || '')}</td><td>${escapeHtml(cadetDisplayName(c))}</td><td>${escapeHtml(i.grade_at_inspection)}</td><td><strong>${i.total_score}/10</strong></td><td>${escapeHtml(i.overall_rating)}</td><td>${i.passed ? 'Pass' : 'Not Pass'}</td></tr>`;
     }).join('') || '<tr><td colspan="8">No inspections recorded for this filter.</td></tr>';
+  }
+
+  async function listMyEntries() {
+    if (isDemo) {
+      const cadets = loadLS(LS.cadets, []).map(normalizeCadet);
+      const units = loadLS(LS.units, []);
+      const userId = currentProfile?.id;
+      return loadLS(LS.inspections, [])
+        .filter(i => !userId || String(i.evaluator_id || i.evaluator_user_id || '') === String(userId))
+        .map(i => ({
+          ...i,
+          evaluator_id: i.evaluator_id || i.evaluator_user_id || userId,
+          cadets: cadets.find(c => String(c.id) === String(i.cadet_id)) || null,
+          units: units.find(u => String(u.id) === String(i.unit_id)) || null
+        }));
+    }
+    if (!navigator.onLine || !sb) return null;
+
+    const { data, error } = await sb.rpc('uniform_my_entries');
+    if (error) throw error;
+
+    return (data || []).map(row => ({
+      ...row,
+      cadet_id: row.member_id,
+      evaluator_id: row.evaluator_user_id,
+      cadets: {
+        id: row.member_id,
+        capid: row.capid || '',
+        first_name: row.first_name || '',
+        last_name: row.last_name || '',
+        name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        grade: row.current_grade || row.grade_at_inspection || ''
+      },
+      units: row.unit_id ? {
+        id: row.unit_id,
+        charter_number: row.unit_charter_number || '',
+        name: row.unit_name || '',
+        active: true
+      } : null
+    }));
+  }
+
+  function myEntryUnitLabel(row) {
+    if (row.units?.charter_number || row.units?.name) {
+      return [row.units.charter_number, row.units.name].filter(Boolean).join(' — ');
+    }
+    if (row.unit_charter_number || row.unit_name) {
+      return [row.unit_charter_number, row.unit_name].filter(Boolean).join(' — ');
+    }
+    return 'Unassigned / Legacy';
+  }
+
+  function populateMyEntriesUnitFilter(rows) {
+    const sel = $('myEntriesUnitFilter');
+    if (!sel) return;
+    const prior = sel.value || 'all';
+    const units = new Map();
+    let hasUnassigned = false;
+
+    rows.forEach(row => {
+      if (!row.unit_id) {
+        hasUnassigned = true;
+        return;
+      }
+      const key = String(row.unit_id);
+      if (!units.has(key)) units.set(key, myEntryUnitLabel(row));
+    });
+
+    const sorted = [...units.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+    sel.innerHTML =
+      '<option value="all">All My Entries</option>' +
+      sorted.map(([id,label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join('') +
+      (hasUnassigned ? '<option value="unassigned">Unassigned / Legacy</option>' : '');
+
+    if ([...sel.options].some(o => o.value === prior)) sel.value = prior;
+    else sel.value = 'all';
+  }
+
+  function myEntryMatchesUnit(row, filter) {
+    if (!filter || filter === 'all') return true;
+    if (filter === 'unassigned') return !row.unit_id;
+    return String(row.unit_id) === String(filter);
+  }
+
+  async function renderMyEntries() {
+    const offlineNotice = $('myEntriesOfflineNotice');
+    const content = $('myEntriesContent');
+
+    try {
+      const entries = await listMyEntries();
+      if (entries === null) {
+        offlineNotice?.classList.remove('hidden');
+        content?.classList.add('hidden');
+        $('myEntriesFilterSummary').textContent = 'Complete My Entries history requires an internet connection.';
+        return;
+      }
+
+      offlineNotice?.classList.add('hidden');
+      content?.classList.remove('hidden');
+      populateMyEntriesUnitFilter(entries);
+
+      const unitFilter = $('myEntriesUnitFilter')?.value || 'all';
+      const range = getReportDateRange('myEntries');
+      const rows = entries
+        .filter(row => myEntryMatchesUnit(row, unitFilter) && dateMatches(row.inspection_date, range))
+        .sort((a,b) => {
+          const dateCompare = String(b.inspection_date || '').localeCompare(String(a.inspection_date || ''));
+          if (dateCompare) return dateCompare;
+          return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+        });
+
+      const uniqueCadets = new Set(rows.map(r => r.member_id || r.cadet_id || r.capid).filter(Boolean)).size;
+      const uniqueUnits = new Set(rows.map(r => r.unit_id).filter(Boolean)).size;
+      const avg = rows.length ? average(rows.map(r => Number(r.total_score))) : 0;
+      const passRate = rows.length ? Math.round(rows.filter(r => r.passed).length / rows.length * 100) : 0;
+
+      const unitLabel = unitFilter === 'all'
+        ? 'All My Entries'
+        : unitFilter === 'unassigned'
+          ? 'Unassigned / Legacy'
+          : (entries.find(r => String(r.unit_id) === String(unitFilter)) ? myEntryUnitLabel(entries.find(r => String(r.unit_id) === String(unitFilter))) : 'Selected Unit');
+
+      $('myEntriesFilterSummary').textContent = `${unitLabel} · ${formatRange(range)}`;
+      $('myEntriesStats').innerHTML = [
+        statCard('My Entries', rows.length, `${uniqueUnits} unit${uniqueUnits === 1 ? '' : 's'} represented`),
+        statCard('Cadets Inspected', uniqueCadets, 'Inspections entered by me'),
+        statCard('Average Score', avg.toFixed(1), 'Out of 10'),
+        statCard('Pass Rate', `${passRate}%`, `${rows.filter(r => r.passed).length} passing inspection${rows.filter(r => r.passed).length === 1 ? '' : 's'}`)
+      ].join('');
+
+      $('myEntriesTableBody').innerHTML = rows.map(r => {
+        const cadet = inspectionCadet(r, []);
+        return `<tr>
+          <td>${formatDate(r.inspection_date)}</td>
+          <td>${escapeHtml(myEntryUnitLabel(r))}</td>
+          <td>${escapeHtml(cadet.capid || r.capid || '')}</td>
+          <td>${escapeHtml(cadetDisplayName(cadet))}</td>
+          <td>${escapeHtml(r.grade_at_inspection || '')}</td>
+          <td><strong>${Number(r.total_score)}/10</strong></td>
+          <td>${escapeHtml(r.overall_rating || '')}</td>
+          <td>${r.passed ? 'Pass' : 'Not Pass'}</td>
+          <td>${escapeHtml(r.notes || '')}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="9">You have no inspection entries matching this filter.</td></tr>';
+
+      window.__lastMyEntries = rows;
+    } catch (err) {
+      offlineNotice?.classList.remove('hidden');
+      content?.classList.add('hidden');
+      $('myEntriesFilterSummary').textContent = err.message || String(err);
+      console.warn('My Entries report failed.', err);
+    }
+  }
+
+  async function exportMyEntriesCSV() {
+    await renderMyEntries();
+    const rows = window.__lastMyEntries || [];
+    const headers = ['Inspection Date','Unit','CAPID','Last Name','First Name','Cadet Grade','Personal Appearance','Garments','Accoutrements','Footwear','Military Bearing','Total Score','Overall Rating','Passed','Notes'];
+    const data = rows.map(r => {
+      const cadet = inspectionCadet(r, []);
+      const legacy = splitLegacyName(cadet.name);
+      return [
+        r.inspection_date,
+        myEntryUnitLabel(r),
+        cadet.capid || r.capid || '',
+        cadet.last_name || legacy.last_name,
+        cadet.first_name || legacy.first_name,
+        r.grade_at_inspection || '',
+        r.personal_appearance,
+        r.garments,
+        r.accoutrements,
+        r.footwear,
+        r.military_bearing,
+        r.total_score,
+        r.overall_rating || '',
+        r.passed ? 'Yes' : 'No',
+        r.notes || ''
+      ];
+    });
+    downloadCSV([headers,...data].map(row => row.map(csvCell).join(',')).join('\n'), `CAP_my_uniform_entries_${localDateISO()}.csv`);
   }
 
   function splitLegacyName(name = '') {
@@ -2354,7 +2540,7 @@
 
   function setupPWA() {
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v15.js').catch(err => console.warn('Service worker registration failed:', err)));
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v16.js').catch(err => console.warn('Service worker registration failed:', err)));
     }
     window.addEventListener('beforeinstallprompt', event => {
       event.preventDefault();
