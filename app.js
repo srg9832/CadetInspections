@@ -288,6 +288,9 @@
     });
     $('newUserHomeUnit')?.addEventListener('change', resetNewUserLookup);
     $('changePasswordBtn')?.addEventListener('click', () => openPasswordChange(false));
+    $('removeUnitCancelBtn')?.addEventListener('click', closeRemoveFromUnitDialog);
+    $('removeUnitConfirmBtn')?.addEventListener('click', confirmRemoveFromUnit);
+    $('removeUnitDialog')?.addEventListener('cancel', e => { e.preventDefault(); closeRemoveFromUnitDialog(); });
     $('passwordChangeCloseBtn')?.addEventListener('click', closePasswordChange);
     $('passwordChangeCancelBtn')?.addEventListener('click', closePasswordChange);
     $('passwordChangeForm')?.addEventListener('submit', handlePasswordChange);
@@ -1343,21 +1346,28 @@
     const unitId = $('adminManagedUnitFilter')?.value || '';
     const search = ($('adminUserSearch')?.value || '').trim().toLowerCase();
     if (!unitId) {
-      body.innerHTML = '<tr><td colspan="6">No unit is available for administration.</td></tr>';
+      body.innerHTML = '<tr><td colspan="7">No unit is available for administration.</td></tr>';
       return;
     }
 
     const callerIsAppAdmin = isApplicationAdmin();
     const filtered = adminUsersCache.filter(u => {
-      if (!callerIsAppAdmin && adminRoleFor(u.id, unitId) === 'none') return false;
+      const role = adminRoleFor(u.id, unitId);
+      const belongsToSelectedUnit = role !== 'none' || u.is_app_admin;
+      if (!belongsToSelectedUnit) return false;
       if (!search) return true;
       return `${u.display_name || ''} ${u.first_name || ''} ${u.last_name || ''} ${u.email || ''} ${u.capid || ''}`.toLowerCase().includes(search);
     });
 
     body.innerHTML = filtered.map(u => {
       const role = adminRoleFor(u.id, unitId);
-      const roleOptions = [['none','No Access'],['inspector','Inspector'],['unit_admin','Unit Admin']];
-      const roleSelect = `<select class="admin-unit-role" data-user-id="${u.id}">${roleOptions.map(([v,l]) => `<option value="${v}" ${v===role?'selected':''}>${l}</option>`).join('')}</select>`;
+      const isGlobalAdmin = Boolean(u.is_app_admin);
+      const roleCell = isGlobalAdmin
+        ? '<span class="permission-badge app-admin">All Units</span>'
+        : `<select class="admin-unit-role" data-user-id="${u.id}">
+            <option value="inspector" ${role==='inspector'?'selected':''}>Inspector</option>
+            <option value="unit_admin" ${role==='unit_admin'?'selected':''}>Unit Admin</option>
+           </select>`;
 
       const homeUnit = unitsCache.find(x => String(x.id) === String(u.default_unit_id || ''));
       let homeCell = escapeHtml(homeUnit ? unitOptionLabel(homeUnit) : 'Not set');
@@ -1369,13 +1379,13 @@
 
       const appAdminCell = callerIsAppAdmin
         ? `<label class="permission-toggle"><input class="admin-app-admin-toggle" data-user-id="${u.id}" type="checkbox" ${u.is_app_admin?'checked':''}> <span>${u.is_app_admin?'Yes':'No'}</span></label>`
-        : (u.is_app_admin ? '<span class="permission-badge app-admin">Application Admin</span>' : '—');
+        : (u.is_app_admin ? '<span class="permission-badge app-admin">Yes</span>' : 'No');
 
       const nameCell = callerIsAppAdmin
         ? `<div class="admin-inline-name">
             <input class="admin-inline-input admin-identity-input" data-field="first_name" data-original="${escapeHtml(u.first_name || '')}" value="${escapeHtml(u.first_name || '')}" placeholder="First name" aria-label="First name">
             <input class="admin-inline-input admin-identity-input" data-field="last_name" data-original="${escapeHtml(u.last_name || '')}" value="${escapeHtml(u.last_name || '')}" placeholder="Last name" aria-label="Last name">
-           </div><small class="admin-inline-caption admin-display-name">${escapeHtml(u.display_name || '')}</small>`
+           </div>`
         : `<strong>${escapeHtml(u.display_name || '')}</strong>`;
 
       const capidCell = callerIsAppAdmin
@@ -1386,17 +1396,23 @@
         ? `<input class="admin-inline-input admin-identity-input" data-field="email" data-original="${escapeHtml(u.email || '')}" value="${escapeHtml(u.email || '')}" type="email" aria-label="Email">`
         : escapeHtml(u.email || '');
 
+      const removeCell = isGlobalAdmin
+        ? ''
+        : `<button class="secondary admin-remove-unit" type="button" data-user-id="${u.id}">Remove from Unit</button>`;
+
       return `<tr data-user-id="${u.id}">
         <td>${nameCell}</td>
         <td>${capidCell}</td>
         <td>${emailCell}</td>
         <td>${homeCell}</td>
-        <td>${roleSelect}</td>
+        <td>${roleCell}</td>
         <td>${appAdminCell}</td>
+        <td>${removeCell}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="6">${callerIsAppAdmin ? 'No users match this search.' : 'No users are assigned to this unit yet.'}</td></tr>`;
+    }).join('') || '<tr><td colspan="7">No users are assigned to this unit yet.</td></tr>';
 
     body.querySelectorAll('.admin-unit-role').forEach(sel => sel.addEventListener('change', () => saveAdminUnitRole(sel.dataset.userId)));
+    body.querySelectorAll('.admin-remove-unit').forEach(btn => btn.addEventListener('click', () => openRemoveFromUnitDialog(btn.dataset.userId)));
     body.querySelectorAll('.admin-home-unit').forEach(sel => sel.addEventListener('change', () => saveAdminHomeUnit(sel.dataset.userId, sel.value)));
     body.querySelectorAll('.admin-app-admin-toggle').forEach(input => input.addEventListener('change', () => saveAdminAppAdmin(input.dataset.userId, input.checked)));
     body.querySelectorAll('.admin-identity-input').forEach(input => {
@@ -1413,7 +1429,7 @@
   async function refreshUsers() {
     if (!canAdministerUniform()) return;
     if (!isDemo && !navigator.onLine) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="6">User permissions can only be managed while online.</td></tr>';
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = '<tr><td colspan="7">User permissions can only be managed while online.</td></tr>';
       return;
     }
     try {
@@ -1423,7 +1439,57 @@
       populateAdminManagedUnitFilter();
       renderAdminAccessTable();
     } catch (err) {
-      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="6">${escapeHtml(err.message)}</td></tr>`;
+      if ($('usersTableBody')) $('usersTableBody').innerHTML = `<tr><td colspan="7">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function openRemoveFromUnitDialog(userId) {
+    const unitId = $('adminManagedUnitFilter')?.value || '';
+    const user = adminUsersCache.find(u => String(u.id) === String(userId));
+    const unit = unitsCache.find(u => String(u.id) === String(unitId));
+    if (!user || !unit) return;
+
+    const dialog = $('removeUnitDialog');
+    dialog.dataset.userId = String(userId);
+    dialog.dataset.unitId = String(unitId);
+    $('removeUnitDialogText').textContent = `Remove ${user.display_name || user.email} from ${unitOptionLabel(unit)}?`;
+    dialog.showModal();
+  }
+
+  function closeRemoveFromUnitDialog() {
+    const dialog = $('removeUnitDialog');
+    if (!dialog) return;
+    dialog.dataset.userId = '';
+    dialog.dataset.unitId = '';
+    if (dialog.open) dialog.close();
+  }
+
+  async function confirmRemoveFromUnit() {
+    const dialog = $('removeUnitDialog');
+    const userId = dialog?.dataset.userId || '';
+    const unitId = dialog?.dataset.unitId || '';
+    if (!userId || !unitId) return closeRemoveFromUnitDialog();
+    if (!navigator.onLine && !isDemo) return toast('Permission changes require an internet connection.');
+
+    const button = $('removeUnitConfirmBtn');
+    button.disabled = true;
+    button.textContent = 'Removing…';
+    try {
+      if (isDemo) return toast('Permission editing is available in Supabase mode.');
+      const { error } = await sb.rpc('uniform_admin_set_unit_role', {
+        p_user_id: userId,
+        p_unit_id: unitId,
+        p_role: 'none'
+      });
+      if (error) throw error;
+      closeRemoveFromUnitDialog();
+      toast('Removed from unit — shared login was not deleted');
+      await refreshUsers();
+    } catch (err) {
+      toast(err.message || String(err));
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Remove from Unit';
     }
   }
 
