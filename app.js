@@ -51,6 +51,31 @@
     return isApplicationAdmin(profile) || isAnyUnitAdmin(profile);
   }
 
+  function authorizedUnitIdSet(profile = currentProfile) {
+    if (isApplicationAdmin(profile)) return new Set(unitsCache.map(u => String(u.id)));
+    return new Set((profile?.authorized_unit_ids || []).map(String));
+  }
+
+  function isAuthorizedUnit(unitId, profile = currentProfile) {
+    if (!unitId) return false;
+    if (isApplicationAdmin(profile)) return true;
+    return authorizedUnitIdSet(profile).has(String(unitId));
+  }
+
+  function authorizedUnits({ activeOnly = false } = {}) {
+    const ids = authorizedUnitIdSet();
+    return unitsCache.filter(u =>
+      (isApplicationAdmin() || ids.has(String(u.id))) &&
+      (!activeOnly || u.active !== false)
+    );
+  }
+
+  function scopeInspectionsToAuthorizedUnits(rows = []) {
+    if (isDemo || isApplicationAdmin()) return rows;
+    const ids = authorizedUnitIdSet();
+    return rows.filter(r => r.unit_id && ids.has(String(r.unit_id)));
+  }
+
   function profileRoleLabel(profile = currentProfile) {
     if (isApplicationAdmin(profile)) return 'Application Admin';
     if (isAnyUnitAdmin(profile)) return 'Unit Admin';
@@ -65,17 +90,16 @@
   }
 
   function chooseInitialWorkingUnit() {
-    const active = unitsCache.filter(u => u.active !== false);
-    const authorized = new Set((currentProfile?.authorized_unit_ids || active.map(u => u.id)).map(String));
+    const active = authorizedUnits({ activeOnly: true });
     const home = currentProfile?.default_unit_id ? String(currentProfile.default_unit_id) : '';
-    const homeAllowed = active.some(u => String(u.id) === home && authorized.has(String(u.id)));
-    workingUnitId = homeAllowed ? home : (active.find(u => authorized.has(String(u.id)))?.id || active[0]?.id || null);
+    const homeAllowed = active.some(u => String(u.id) === home);
+    workingUnitId = homeAllowed ? home : (active[0]?.id || null);
   }
 
   function updateWorkingUnitUI() {
     const sel = $('workingUnitSelect');
     if (!sel) return;
-    const active = unitsCache.filter(u => u.active !== false);
+    const active = authorizedUnits({ activeOnly: true });
     sel.innerHTML = active.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
     if (workingUnitId && [...sel.options].some(o => String(o.value) === String(workingUnitId))) sel.value = String(workingUnitId);
     $('workingUnitControl')?.classList.toggle('hidden', !active.length);
@@ -99,7 +123,7 @@
   }
 
   async function setWorkingUnit(unitId, { announce = true } = {}) {
-    const unit = unitsCache.find(u => String(u.id) === String(unitId) && u.active !== false);
+    const unit = authorizedUnits({ activeOnly: true }).find(u => String(u.id) === String(unitId));
     if (!unit) return;
     workingUnitId = String(unit.id);
     updateWorkingUnitUI();
@@ -650,7 +674,10 @@
       refreshAllBulkRows();
       setTimeout(() => $('bulkTableBody').querySelector('.bulk-capid')?.focus(), 0);
     }
-    if (viewId === 'reportsView') switchReport('historyView');
+    if (viewId === 'reportsView') {
+      applyWorkingUnitToSelectors();
+      switchReport('historyView');
+    }
     if (viewId === 'usersView') {
       refreshUsers();
       if (isApplicationAdmin()) updateGradingRuleForm();
@@ -996,14 +1023,29 @@
     const [cadets, inspections] = await Promise.all([listCadets(), listInspections()]);
     const sel = $('historyCadetSelect');
     const prior = sel.value;
-    const unitFilter = $('historyUnitFilter')?.value || 'all';
-    let filtered = cadets;
-    if (unitFilter !== 'all') {
-      const idsWithHistory = new Set(inspections.filter(i => unitMatches(i, unitFilter)).map(i => inspectionCadetKey(i)));
-      filtered = cadets.filter(c => unitFilter === 'unassigned'
-        ? !c.current_unit_id || idsWithHistory.has(cadetKey(c))
-        : String(c.current_unit_id || '') === String(unitFilter) || idsWithHistory.has(cadetKey(c)));
+    const unitFilter = $('historyUnitFilter')?.value || (workingUnitId || 'all');
+
+    const idsWithHistory = new Set(
+      inspections.filter(i => unitMatches(i, unitFilter)).map(i => inspectionCadetKey(i))
+    );
+
+    let filtered;
+    if (unitFilter === 'all') {
+      filtered = cadets.filter(c =>
+        (c.current_unit_id && isAuthorizedUnit(c.current_unit_id)) ||
+        idsWithHistory.has(cadetKey(c))
+      );
+    } else if (unitFilter === 'unassigned') {
+      filtered = isApplicationAdmin()
+        ? cadets.filter(c => !c.current_unit_id || idsWithHistory.has(cadetKey(c)))
+        : [];
+    } else {
+      filtered = cadets.filter(c =>
+        String(c.current_unit_id || '') === String(unitFilter) ||
+        idsWithHistory.has(cadetKey(c))
+      );
     }
+
     sel.innerHTML = '<option value="">Select cadet...</option>' + filtered
       .sort((a,b) => cadetSortName(a).localeCompare(cadetSortName(b)))
       .map(c => `<option value="${escapeHtml(cadetKey(c))}">${escapeHtml(cadetDisplayName(c))} — ${escapeHtml(c.grade)} — ${escapeHtml(c.capid)}</option>`).join('');
@@ -1067,7 +1109,7 @@
     const medianScore = total ? median(inspections.map(i => Number(i.total_score))) : 0;
     $('dashboardStats').innerHTML = [
       statCard('Total Inspections', total, formatRange(range)),
-      statCard('Cadets Inspected', new Set(inspections.map(i => inspectionCadetKey(i))).size, unitFilter === 'all' ? 'Across all units' : unitLabelFromFilter(unitFilter)),
+      statCard('Cadets Inspected', new Set(inspections.map(i => inspectionCadetKey(i))).size, unitFilter === 'all' ? 'Across authorized units' : unitLabelFromFilter(unitFilter)),
       statCard('Average Score', avgScore.toFixed(1), `Median ${medianScore.toFixed(1)} · out of 10`),
       statCard('Pass Rate', `${passRate}%`, `${inspections.filter(i => i.passed).length} passing inspections`)
     ].join('');
@@ -1139,12 +1181,17 @@
       try {
         const { data, error } = await sb.rpc('uniform_list_units');
         if (error) throw error;
-        unitsCache = data || [];
+        const raw = data || [];
+        const ids = isApplicationAdmin() ? null : new Set((currentProfile?.authorized_unit_ids || []).map(String));
+        unitsCache = isApplicationAdmin() ? raw : raw.filter(u => ids.has(String(u.id)));
         if (offlineStore) await offlineStore.cacheUnits(unitsCache);
         return unitsCache;
       } catch (err) { console.warn('Shared unit server read failed; using tablet cache.', err); }
     }
-    return offlineStore ? await offlineStore.getUnits() : unitsCache;
+    const cached = offlineStore ? await offlineStore.getUnits() : unitsCache;
+    const ids = isApplicationAdmin() ? null : new Set((currentProfile?.authorized_unit_ids || []).map(String));
+    unitsCache = isApplicationAdmin() ? (cached || []) : (cached || []).filter(u => ids.has(String(u.id)));
+    return unitsCache;
   }
 
   async function listInspectorDirectory() {
@@ -1165,17 +1212,39 @@
   function populateUnitSelectors() {
     const prior = {};
     ['inspectionUnit','bulkUnit','historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter','legacyUnitSelect','newUserUnit','newUserHomeUnit'].forEach(id => { if ($(id)) prior[id] = $(id).value; });
-    const activeOptions = unitsCache.map(u => `<option value="${u.id}" ${u.active === false ? 'disabled' : ''}>${escapeHtml(unitOptionLabel(u))}</option>`).join('');
-    ['inspectionUnit','bulkUnit','legacyUnitSelect','newUserUnit','newUserHomeUnit'].forEach(id => { if ($(id)) $(id).innerHTML = '<option value="">Select unit...</option>' + activeOptions; });
-    const reportOptions = '<option value="all">All Authorized Units</option><option value="unassigned">Unassigned / Legacy</option>' + unitsCache.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
-    ['historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter'].forEach(id => { if ($(id)) $(id).innerHTML = reportOptions; });
-    Object.entries(prior).forEach(([id, value]) => { if ($(id) && [...$(id).options].some(o => o.value === value)) $(id).value = value; });
+
+    const allowedUnits = authorizedUnits();
+    const activeAllowed = allowedUnits.filter(u => u.active !== false);
+    const activeOptions = activeAllowed.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
+
+    ['inspectionUnit','bulkUnit','legacyUnitSelect','newUserUnit','newUserHomeUnit'].forEach(id => {
+      if ($(id)) $(id).innerHTML = '<option value="">Select unit...</option>' + activeOptions;
+    });
+
+    const legacyOption = isApplicationAdmin() ? '<option value="unassigned">Unassigned / Legacy</option>' : '';
+    const reportOptions = '<option value="all">All Authorized Units</option>' + legacyOption +
+      allowedUnits.map(u => `<option value="${u.id}">${escapeHtml(unitOptionLabel(u))}</option>`).join('');
+    ['historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter'].forEach(id => {
+      if ($(id)) $(id).innerHTML = reportOptions;
+    });
+
+    Object.entries(prior).forEach(([id, value]) => {
+      if ($(id) && [...$(id).options].some(o => o.value === value)) $(id).value = value;
+    });
+
+    if (workingUnitId) {
+      ['historyUnitFilter','dashboardUnitFilter','inspectorUnitFilter'].forEach(id => {
+        const el = $(id);
+        if (el && [...el.options].some(o => String(o.value) === String(workingUnitId))) el.value = String(workingUnitId);
+      });
+    }
+
     updateWorkingUnitUI();
     updateWorkingUnitButtons();
   }
 
   function unitLabelFromFilter(value) {
-    if (value === 'all') return 'All Units';
+    if (value === 'all') return 'All Authorized Units';
     if (value === 'unassigned') return 'Unassigned / Legacy';
     const u = unitsCache.find(x => String(x.id) === String(value));
     return u ? `${u.charter_number} — ${u.name}` : 'Selected Unit';
@@ -1185,7 +1254,12 @@
     const u = unitsCache.find(x => String(x.id) === String(i.unit_id));
     return u ? `${u.charter_number} — ${u.name}` : 'Unassigned';
   }
-  function unitMatches(i, filter) { if (!filter || filter === 'all') return true; if (filter === 'unassigned') return !i.unit_id; return String(i.unit_id) === String(filter); }
+  function unitMatches(i, filter) {
+    if (!filter || filter === 'all') return Boolean(i.unit_id && isAuthorizedUnit(i.unit_id));
+    if (filter === 'unassigned') return isApplicationAdmin() && !i.unit_id;
+    if (!isAuthorizedUnit(filter)) return false;
+    return String(i.unit_id) === String(filter);
+  }
 
   function toggleCustomDates(prefix) {
     const custom = $(`${prefix}DateRange`).value === 'custom';
@@ -2060,12 +2134,15 @@
           .select('*, members(id,capid,first_name,last_name,current_grade), units(id,charter_number,name,active)')
           .order('inspection_date', { ascending: true });
         if (error) throw error;
-        const normalized = (data || []).map(normalizeSharedInspection);
-        if (offlineStore) { await offlineStore.cacheServerInspections(normalized); return await offlineStore.getInspections(); }
+        const normalized = scopeInspectionsToAuthorizedUnits((data || []).map(normalizeSharedInspection));
+        if (offlineStore) {
+          await offlineStore.cacheServerInspections(normalized);
+          return scopeInspectionsToAuthorizedUnits(await offlineStore.getInspections());
+        }
         return normalized;
       } catch (err) { console.warn('Inspection history server read failed; using tablet cache.', err); }
     }
-    return offlineStore ? await offlineStore.getInspections() : [];
+    return offlineStore ? scopeInspectionsToAuthorizedUnits(await offlineStore.getInspections()) : [];
   }
 
   async function listProfiles() {
@@ -2183,12 +2260,15 @@
         sb.rpc('uniform_list_inspectors')
       ]);
       for (const result of [cadetsResult, inspectionsResult, rulesResult, unitsResult, inspectorsResult]) if (result.error) throw result.error;
-      inspectionsResult.data = (inspectionsResult.data || []).map(normalizeSharedInspection);
+      inspectionsResult.data = scopeInspectionsToAuthorizedUnits((inspectionsResult.data || []).map(normalizeSharedInspection));
+      const rawUnits = unitsResult.data || [];
+      const authorizedIds = isApplicationAdmin() ? null : new Set((currentProfile?.authorized_unit_ids || []).map(String));
+      const scopedUnits = isApplicationAdmin() ? rawUnits : rawUnits.filter(u => authorizedIds.has(String(u.id)));
       await offlineStore.cacheCadets(cadetsResult.data || []);
       await offlineStore.cacheServerInspections(inspectionsResult.data || []);
-      await offlineStore.cacheUnits(unitsResult.data || []);
+      await offlineStore.cacheUnits(scopedUnits);
       await offlineStore.cacheInspectorDirectory(inspectorsResult.data || []);
-      unitsCache = unitsResult.data || [];
+      unitsCache = scopedUnits;
       inspectorDirectory = inspectorsResult.data || [];
       const rules = cloneDefaultRules();
       (rulesResult.data || []).forEach(r => { rules[r.grade_group] = { passing_min: Number(r.passing_min), excellent_min: Number(r.excellent_min) }; });
@@ -2274,7 +2354,7 @@
 
   function setupPWA() {
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v14.js').catch(err => console.warn('Service worker registration failed:', err)));
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v15.js').catch(err => console.warn('Service worker registration failed:', err)));
     }
     window.addEventListener('beforeinstallprompt', event => {
       event.preventDefault();
