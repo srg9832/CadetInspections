@@ -2538,28 +2538,73 @@
     }
   }
 
+  function isInstalledPWA() {
+    return window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+  }
+
+  function updateInstallButton() {
+    const btn = $('installPwaBtn');
+    if (!btn) return;
+    const installed = isInstalledPWA();
+    btn.classList.toggle('hidden', installed);
+    btn.disabled = installed;
+    btn.textContent = installed ? 'App Installed' : 'Install App';
+    btn.title = installed
+      ? 'CAP Uniform Inspection Tracker is already installed.'
+      : 'Install CAP Uniform Inspection Tracker on this device.';
+  }
+
   function setupPWA() {
+    updateInstallButton();
+
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v16.js').catch(err => console.warn('Service worker registration failed:', err)));
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker-v18.js').catch(err => console.warn('Service worker registration failed:', err)));
     }
+
     window.addEventListener('beforeinstallprompt', event => {
       event.preventDefault();
       deferredInstallPrompt = event;
-      $('installPwaBtn')?.classList.remove('hidden');
+      updateInstallButton();
     });
+
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
-      $('installPwaBtn')?.classList.add('hidden');
+      updateInstallButton();
       toast('CAP Inspection app installed');
     });
+
+    window.matchMedia?.('(display-mode: standalone)')?.addEventListener?.('change', updateInstallButton);
   }
 
   async function installPWA() {
-    if (!deferredInstallPrompt) return;
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice.catch(() => null);
-    deferredInstallPrompt = null;
-    $('installPwaBtn')?.classList.add('hidden');
+    if (isInstalledPWA()) {
+      updateInstallButton();
+      return;
+    }
+
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice.catch(() => null);
+      if (choice?.outcome === 'accepted') {
+        deferredInstallPrompt = null;
+        updateInstallButton();
+      } else {
+        // Keep the button available if the user cancels the browser prompt.
+        updateInstallButton();
+      }
+      return;
+    }
+
+    // Browsers such as iOS Safari do not expose a programmatic install prompt.
+    // Keep the control visible rather than making the install feature disappear.
+    const ua = navigator.userAgent || '';
+    const isIOS = /iPad|iPhone|iPod/.test(ua);
+    if (isIOS) {
+      toast('Safari requires Add to Home Screen from the Share menu.');
+    } else {
+      toast('This browser has not made the install prompt available yet. Chrome or Edge can install this app directly from this button once the site is eligible.');
+    }
   }
 
   async function requestPersistentStorage() {
