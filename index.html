@@ -735,6 +735,7 @@ tbody tr:hover { background: #fafcfd; }
           <div class="subtabs" role="tablist" aria-label="Report type">
             <button class="subtab active" data-report="historyView" type="button">Individual Cadet</button>
             <button class="subtab" data-report="dashboardView" type="button">Unit Overview</button>
+            <button class="subtab" data-report="myEntriesView" type="button">My Entries</button>
             <button class="subtab" data-report="inspectorView" type="button">Inspector Analysis</button>
           </div>
         </div>
@@ -785,6 +786,30 @@ tbody tr:hover { background: #fafcfd; }
             <thead><tr><th>Date</th><th>Unit</th><th>CAPID</th><th>Name</th><th>Cadet Grade</th><th>Score</th><th>Inspection Rating</th><th>Result</th></tr></thead>
             <tbody id="recentTableBody"></tbody>
           </table></div></div>
+        </section>
+
+        <section id="myEntriesView" class="report-panel">
+          <div class="app-panel report-filter-bar">
+            <label class="field"><span>Unit</span><select id="myEntriesUnitFilter"><option value="all">All My Entries</option></select></label>
+            <label class="field"><span>Date Range</span><select id="myEntriesDateRange" class="date-range-select">
+              <option value="1m">Last Month</option><option value="3m">Last 3 Months</option><option value="6m">Last 6 Months</option><option value="12m" selected>Last 12 Months</option><option value="ytd">Year to Date</option><option value="previous_year">Previous Calendar Year</option><option value="all">All Time</option><option value="custom">Custom Range</option>
+            </select></label>
+            <label class="field custom-myEntries-date hidden"><span>From</span><input id="myEntriesStartDate" type="date"></label>
+            <label class="field custom-myEntries-date hidden"><span>To</span><input id="myEntriesEndDate" type="date"></label>
+            <div class="report-filter-actions"><button id="exportMyEntriesBtn" class="secondary" type="button">Export My Entries CSV</button></div>
+          </div>
+          <div id="myEntriesFilterSummary" class="filter-summary"></div>
+          <div id="myEntriesOfflineNotice" class="empty-state hidden">Connect to the internet to load your complete personal inspection history.</div>
+          <div id="myEntriesContent">
+            <div id="myEntriesStats" class="stat-grid four"></div>
+            <div class="app-panel report-table-card">
+              <h2>Inspections I Entered</h2>
+              <div class="table-wrap"><table>
+                <thead><tr><th>Date</th><th>Unit</th><th>CAPID</th><th>Name</th><th>Cadet Grade</th><th>Score</th><th>Inspection Rating</th><th>Result</th><th>Notes</th></tr></thead>
+                <tbody id="myEntriesTableBody"></tbody>
+              </table></div>
+            </div>
+          </div>
         </section>
 
         <section id="inspectorView" class="report-panel">
