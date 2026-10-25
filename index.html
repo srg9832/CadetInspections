@@ -402,6 +402,25 @@ tbody tr:hover { background: #fafcfd; }
   .stat-grid.five { grid-template-columns: 1fr; }
 }
 
+
+/* Compact reviewer worksheet */
+.review-title{margin-bottom:9px}.review-panel{padding:12px;border-radius:3px}
+.review-pickers{display:grid;grid-template-columns:minmax(140px,1fr) minmax(230px,2.2fr) 160px;gap:12px;margin-bottom:10px}
+.review-pickers .field{font-size:.77rem;gap:4px}.review-pickers input,.review-pickers select{min-height:34px;padding:5px 7px;border-radius:3px}
+.review-explanation{font-size:.77rem;color:var(--muted);margin:9px 0}
+.review-table{width:100%;min-width:940px;border-collapse:collapse;font-size:.78rem}
+.review-table th{text-align:left;background:#edf2f6;color:#32495d;border:1px solid #d9e2eb;padding:7px 8px}
+.review-table td{border-bottom:1px solid #e2e8ed;padding:6px 8px}
+.review-table tr:nth-child(even){background:#fafbfd}.review-table tbody tr:hover{background:#edf6fb}
+.review-table input[type=radio]{min-height:auto;width:16px;height:16px;accent-color:#23567c}
+.review-empty{padding:19px!important;color:var(--muted);text-align:center}
+.review-inspection-note{font-size:.78rem;color:#586776;margin:8px 0}
+.review-footer{display:flex;align-items:end;gap:16px;justify-content:space-between;margin-top:10px}
+.review-notes{flex:1;min-width:220px}.review-notes textarea{min-height:56px;padding:7px 9px;border-radius:3px}
+.review-actions{display:flex;gap:8px}.review-actions button{white-space:nowrap;padding:9px 13px;border-radius:3px}
+.review-help{margin:10px 0 0;color:var(--muted);font-size:.74rem}
+@media(max-width:770px){.review-pickers{grid-template-columns:1fr}.review-footer{flex-direction:column;align-items:stretch}.review-actions{justify-content:flex-end}.main-tab{font-size:.73rem!important}}
+
 </style>
 </head>
 <body>
@@ -437,8 +456,9 @@ tbody tr:hover { background: #fafcfd; }
       <button class="main-tab" data-view="reportsView" type="button">
         <span class="tab-number">3</span><span>Reports</span>
       </button>
+      <button id="uniformReviewTab" class="main-tab hidden" data-view="uniformReviewView" type="button"><span class="tab-number">4</span><span>Uniform Review</span></button>
       <button id="usersTab" class="main-tab" data-view="usersView" type="button">
-        <span class="tab-number">4</span><span>Administration</span>
+        <span class="tab-number">5</span><span>Administration</span>
       </button>
     </nav>
 
@@ -846,6 +866,40 @@ tbody tr:hover { background: #fafcfd; }
       <!-- ============================================================
            ADMINISTRATION TAB
            ============================================================ -->
+
+      <section id="uniformReviewView" class="view" aria-label="Uniform Review">
+        <div class="page-title-row review-title">
+          <div><div class="page-kicker">UNIFORM REVIEW</div>
+            <h1>Uniform Review for Promotion</h1>
+            <p>Review a cadet's inspection history and explicitly approve a satisfactory uniform requirement.</p>
+          </div>
+        </div>
+        <div class="app-panel review-panel">
+          <div class="review-pickers">
+            <label class="field"><span>Unit</span><select id="reviewUnit"><option value="">Select unit...</option></select></label>
+            <label class="field"><span>Cadet / CAPID</span><select id="reviewCadet"><option value="">Select cadet...</option></select></label>
+            <label class="field"><span>Review Date</span><input id="reviewDate" type="date" required></label>
+          </div>
+          <div id="reviewMessage" class="form-message" role="status"></div>
+          <div class="review-explanation">Select the inspection being reviewed. Scores and inspector ratings are historical observations, not automatic approval. Only an authorized reviewer can approve the requirement. Review decisions require an online connection.</div>
+          <div class="table-wrap review-table-wrap">
+            <table class="review-table">
+              <thead><tr><th>Use</th><th>Inspection Date</th><th>Score</th><th>Inspector Rating</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Review Status</th></tr></thead>
+              <tbody id="reviewHistory"><tr><td colspan="10" class="review-empty">Select a cadet to view inspections.</td></tr></tbody>
+            </table>
+          </div>
+          <div id="reviewInspectionNotes" class="review-inspection-note"></div>
+          <div class="review-footer">
+            <label class="field review-notes"><span>Review Notes (optional)</span><textarea id="reviewNotes" maxlength="1000" rows="2" placeholder="Reason for decision or required corrections"></textarea></label>
+            <div class="review-actions">
+              <button id="reviewDecline" class="secondary" type="button" disabled>Not Satisfactory</button>
+              <button id="reviewApprove" class="primary" type="button" disabled>Approve Uniform</button>
+            </div>
+          </div>
+          <p class="review-help">Approved reviews appear in Data Entry Reports under the Uniform column, dated on the review date, as needing eServices entry. The inspection's original date and score remain in its history.</p>
+        </div>
+      </section>
+
       <section id="usersView" class="view">
         <div class="page-title-row">
           <div>
@@ -1002,6 +1056,6 @@ tbody tr:hover { background: #fafcfd; }
   <script src="config.js"></script>
   <script src="offline-store.js?v=18.0.0"></script>
   <script src="permissions-v18.js"></script>
-  <script src="app-v18.js"></script>
+  <script src="app-v19.js"></script>
 </body>
 </html>
