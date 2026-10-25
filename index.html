@@ -421,6 +421,21 @@ tbody tr:hover { background: #fafcfd; }
 .review-help{margin:10px 0 0;color:var(--muted);font-size:.74rem}
 @media(max-width:770px){.review-pickers{grid-template-columns:1fr}.review-footer{flex-direction:column;align-items:stretch}.review-actions{justify-content:flex-end}.main-tab{font-size:.73rem!important}}
 
+
+/* Two-month uniform record review */
+.review-summary{display:flex;align-items:center;flex-wrap:wrap;gap:7px 17px;padding:8px 10px;border:1px solid #ced8e2;background:#f5f8fb;color:#334e64;font-size:.79rem;margin:9px 0}
+.review-summary span{white-space:nowrap}
+.review-count-ok{color:#25613b}.review-count-poor{color:#953b32}
+.review-satisfactory{font-weight:700;color:#25613b}
+.review-needs-improvement{font-weight:700;color:#9b302c}
+.review-original-notes{color:#576674;font-size:.72rem;max-width:245px;overflow-wrap:anywhere}
+.review-prior{display:flex;flex-wrap:wrap;gap:5px 12px;margin:8px 0;color:#5c6d7a;font-size:.74rem}
+.review-prior-decision{border-left:2px solid #a8bacb;padding-left:7px}
+.review-explanation{margin:6px 0 10px}
+.review-table{min-width:860px}
+.review-actions .primary{max-width:245px;white-space:normal;line-height:1.25}
+@media(max-width:700px){.review-summary span{white-space:normal}}
+
 </style>
 </head>
 <body>
@@ -870,8 +885,8 @@ tbody tr:hover { background: #fafcfd; }
       <section id="uniformReviewView" class="view" aria-label="Uniform Review">
         <div class="page-title-row review-title">
           <div><div class="page-kicker">UNIFORM REVIEW</div>
-            <h1>Uniform Review for Promotion</h1>
-            <p>Review a cadet's inspection history and explicitly approve a satisfactory uniform requirement.</p>
+            <h1>Uniform Record Review for Promotion</h1>
+            <p>Consider all of the cadet's uniform inspections over the previous two months, then make one overall decision.</p>
           </div>
         </div>
         <div class="app-panel review-panel">
@@ -881,22 +896,23 @@ tbody tr:hover { background: #fafcfd; }
             <label class="field"><span>Review Date</span><input id="reviewDate" type="date" required></label>
           </div>
           <div id="reviewMessage" class="form-message" role="status"></div>
-          <div class="review-explanation">Select the inspection being reviewed. Scores and inspector ratings are historical observations, not automatic approval. Only an authorized reviewer can approve the requirement. Review decisions require an online connection.</div>
+          <div id="reviewSummary" class="review-summary" aria-live="polite">Select a cadet and review date to see the two-month inspection summary.</div>
+          <div class="review-explanation">Ratings below are observations from individual inspections. This decision approves or declines the cadet's <strong>overall two-month uniform record</strong> for promotion, regardless of the mix of ratings. It does not change or individually approve any inspection.</div>
           <div class="table-wrap review-table-wrap">
             <table class="review-table">
-              <thead><tr><th>Use</th><th>Inspection Date</th><th>Score</th><th>Inspector Rating</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Review Status</th></tr></thead>
-              <tbody id="reviewHistory"><tr><td colspan="10" class="review-empty">Select a cadet to view inspections.</td></tr></tbody>
+              <thead><tr><th>Inspection Date</th><th>Rating</th><th>Score</th><th>Appearance</th><th>Garments</th><th>Accoutrements</th><th>Footwear</th><th>Bearing</th><th>Inspector Notes</th></tr></thead>
+              <tbody id="reviewHistory"><tr><td colspan="9" class="review-empty">Select a cadet to view the last two months of inspections.</td></tr></tbody>
             </table>
           </div>
-          <div id="reviewInspectionNotes" class="review-inspection-note"></div>
+          <div id="reviewPrior" class="review-prior"></div>
           <div class="review-footer">
-            <label class="field review-notes"><span>Review Notes (optional)</span><textarea id="reviewNotes" maxlength="1000" rows="2" placeholder="Reason for decision or required corrections"></textarea></label>
+            <label class="field review-notes"><span>Overall Review Notes (optional)</span><textarea id="reviewNotes" maxlength="1000" rows="2" placeholder="Consider the full two-month record, trends, and corrections"></textarea></label>
             <div class="review-actions">
               <button id="reviewDecline" class="secondary" type="button" disabled>Not Satisfactory</button>
-              <button id="reviewApprove" class="primary" type="button" disabled>Approve Uniform</button>
+              <button id="reviewApprove" class="primary" type="button" disabled>Approve Cadet Uniform Record</button>
             </div>
           </div>
-          <p class="review-help">Approved reviews appear in Data Entry Reports under the Uniform column, dated on the review date, as needing eServices entry. The inspection's original date and score remain in its history.</p>
+          <p class="review-help">One overall approval appears in Data Entry Reports under Uniform Approved, dated on the review date, as Needs eServices Entry. No individual inspection is approved or entered.</p>
         </div>
       </section>
 
@@ -1056,6 +1072,6 @@ tbody tr:hover { background: #fafcfd; }
   <script src="config.js"></script>
   <script src="offline-store.js?v=18.0.0"></script>
   <script src="permissions-v18.js"></script>
-  <script src="app-v19.js"></script>
+  <script src="app-v20.js"></script>
 </body>
 </html>
