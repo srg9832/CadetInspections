@@ -286,3 +286,9 @@ Key PWA files:
 - `supabase/migrations/20260826021000_pwa_offline_sync.sql`
 
 The first login on a tablet must be online. After that, the cached user can choose **Continue Offline** from the login screen. Individual and Bulk inspections can be entered without internet. When connectivity returns while the app is open, pending inspections are synchronized automatically; **Sync Now** is also available in the header.
+
+## Uniform Review tab (promotion prerequisite)
+
+Uniform Inspection Tracker now has an online-only **Uniform Review** tab available to authorized unit administrators for their units and Uniform application administrators across units. Select the unit, cadet (CAPID), and an existing inspection from the full score history. The review date defaults to the current local date and cannot precede the inspection. Select **Approve Uniform** when satisfactory for promotion, or **Not Satisfactory** to record a rejected decision. Notes are optional. All decisions are permanently associated with the inspector's unchanged inspection record and the reviewer account.
+
+Approvals are independent of the inspection's automated passing score and independent of Leadership Feedback promotion recommendations. Only an approved review appears in Data Entry Reports as an eServices entry item using the **review date**, while the inspection date/score remains reference information. Review decisions are not offered in offline mode; ordinary inspections still work offline. Approval uniqueness prevents approving the same inspection twice.
