@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = 'cap-uniform-pwa-v3.2.0';
+const CACHE_VERSION = 'cap-uniform-pwa-v3.2.1';
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
