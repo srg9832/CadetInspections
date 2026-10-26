@@ -522,7 +522,7 @@ tbody tr:hover { background: #fafcfd; }
 
               <label class="field field-capid">
                 <span>CAPID *</span>
-                <input id="capid" inputmode="numeric" maxlength="12" required placeholder="123456" />
+                <input id="capid" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" title="CAPID must be exactly 6 digits." required placeholder="123456" />
               </label>
 
               <label class="field field-last">
