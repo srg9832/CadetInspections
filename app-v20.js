@@ -33,6 +33,23 @@
   // Legacy Uniform Inspections used numeric unit IDs. Preserve this mapping so
   // already-installed tablets can synchronize any queued records after cutover.
   const LEGACY_UNIT_CHARTERS = { '1': 'MT-012' };
+  const CAPID_REGEX = /^\d{6}$/;
+  function isValidCapid(value) { return CAPID_REGEX.test(String(value || '').trim()); }
+  function configureCapidField(el) {
+    if (!el) return;
+    el.inputMode = 'numeric';
+    el.maxLength = 6;
+    el.pattern = '[0-9]{6}';
+    el.title = 'CAPID must be exactly 6 digits.';
+    const validate = () => {
+      const cleaned = String(el.value || '').replace(/\D/g, '').slice(0, 6);
+      if (el.value !== cleaned) el.value = cleaned;
+      el.setCustomValidity(el.value && !isValidCapid(el.value) ? 'CAPID must be exactly 6 digits.' : '');
+    };
+    el.addEventListener('input', validate);
+    el.addEventListener('blur', validate);
+    validate();
+  }
   const normalizeCharter = value => String(value || '').replace(/^RMR-/i, '').toUpperCase();
   const isUUID = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
   function resolveSharedUnitId(value) {
@@ -290,6 +307,8 @@
       }, 0);
     });
     $('cadetGrade').addEventListener('change', updateLiveScore);
+    configureCapidField($('capid'));
+    configureCapidField($('newUserCapid'));
     $('capid').addEventListener('blur', autofillCadet);
     $('inspectionForm').addEventListener('submit', saveInspectionFromForm);
     $('historyCadetSelect').addEventListener('change', renderSelectedCadetHistory);
@@ -936,7 +955,7 @@
     tr.className = 'bulk-entry-row';
     tr.dataset.rowId = String(++bulkRowSerial);
     tr.innerHTML = `
-      <td><input class="bulk-capid" inputmode="numeric" maxlength="12" value="${escapeHtml(data.capid || '')}" placeholder="CAPID"></td>
+      <td><input class="bulk-capid" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" title="CAPID must be exactly 6 digits." value="${escapeHtml(data.capid || '')}" placeholder="123456"></td>
       <td><input class="bulk-last-name" value="${escapeHtml(data.last_name || '')}" placeholder="Last"></td>
       <td><input class="bulk-first-name" value="${escapeHtml(data.first_name || '')}" placeholder="First"></td>
       <td><select class="bulk-grade">${gradeOptionsHtml(data.grade || '')}</select></td>
@@ -946,6 +965,7 @@
       <td><button class="bulk-remove" type="button" title="Remove row">×</button></td>`;
     tbody.appendChild(tr);
     tr.querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => { tr.classList.remove('bulk-row-error'); updateBulkRow(tr); }));
+    configureCapidField(tr.querySelector('.bulk-capid'));
     tr.querySelector('.bulk-capid').addEventListener('blur', () => autofillBulkCadet(tr));
     tr.querySelector('.bulk-remove').addEventListener('click', () => { tr.remove(); updateBulkSummary(); });
     updateBulkRow(tr);
@@ -964,11 +984,12 @@
     const first_name = tr.querySelector('.bulk-first-name').value.trim();
     const grade = tr.querySelector('.bulk-grade').value;
     const blank = !capid && !last_name && !first_name && !grade && [...tr.querySelectorAll('.bulk-rating')].every(s => s.value === '');
-    const complete = Boolean(capid && last_name && first_name && grade && scoresComplete);
+    const capidValid = isValidCapid(capid);
+    const complete = Boolean(capidValid && last_name && first_name && grade && scoresComplete);
     const total = Object.values(scores).reduce((a,b) => a + Number(b), 0);
     const group = gradeGroup(grade);
     const result = calculateRating(group, total);
-    return { capid, last_name, first_name, name: `${first_name} ${last_name}`.trim(), grade, scores, blank, complete, total, group, result };
+    return { capid, capidValid, last_name, first_name, name: `${first_name} ${last_name}`.trim(), grade, scores, blank, complete, total, group, result };
   }
 
   function updateBulkRow(tr) {
@@ -976,7 +997,7 @@
     tr.querySelector('.bulk-score').textContent = `${row.total}/10`;
     const resultEl = tr.querySelector('.bulk-result');
     if (!row.complete) {
-      resultEl.textContent = 'Incomplete';
+      resultEl.textContent = row.capid && !row.capidValid ? 'CAPID must be 6 digits' : 'Incomplete';
       resultEl.className = 'bulk-result incomplete';
     } else {
       resultEl.textContent = row.result.passed ? 'PASS' : 'FAIL';
@@ -1169,6 +1190,7 @@
   async function autofillCadet() {
     const capid = $('capid').value.trim();
     if (!capid) return;
+    if (!isValidCapid(capid)) { $('capid').reportValidity(); return; }
     const cadets = await listCadets();
     const cadet = cadets.find(c => c.capid === capid);
     if (cadet) {
@@ -1196,6 +1218,7 @@
     const date = $('inspectionDate').value;
     const unitId = $('inspectionUnit').value;
     if (!capid || !first_name || !last_name || !grade || !date || !unitId) return setMessage('inspectionMessage', 'Complete the unit, cadet information, and date.', 'error');
+    if (!isValidCapid(capid)) return setMessage('inspectionMessage', 'CAPID must be exactly 6 digits.', 'error');
     const name = `${first_name} ${last_name}`.trim();
 
     const group = gradeGroup(grade);
@@ -1880,7 +1903,7 @@
         : `<strong>${escapeHtml(u.display_name || '')}</strong>`;
 
       const capidCell = callerIsAppAdmin
-        ? `<input class="admin-inline-input admin-identity-input" data-field="capid" data-original="${escapeHtml(u.capid || '')}" value="${escapeHtml(u.capid || '')}" inputmode="numeric" maxlength="12" placeholder="Not set" aria-label="CAPID">`
+        ? `<input class="admin-inline-input admin-identity-input" data-field="capid" data-original="${escapeHtml(u.capid || '')}" value="${escapeHtml(u.capid || '')}" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" title="CAPID must be exactly 6 digits." placeholder="Not set" aria-label="CAPID">`
         : escapeHtml(u.capid || 'Not set');
 
       const emailCell = callerIsAppAdmin
@@ -2058,6 +2081,7 @@
       const lastName = row.querySelector('[data-field="last_name"]')?.value.trim() ?? (user.last_name || '');
       const capid = row.querySelector('[data-field="capid"]')?.value.trim() ?? (user.capid || '');
       const email = row.querySelector('[data-field="email"]')?.value.trim().toLowerCase() ?? (user.email || '');
+      if (capid && !isValidCapid(capid)) throw new Error('CAPID must be exactly 6 digits.');
       if (!email) throw new Error('Email cannot be blank.');
 
       const displayName = `${firstName} ${lastName}`.trim() || user.display_name || email;
@@ -2123,9 +2147,8 @@
     const capid = $('newUserCapid')?.value.trim() || '';
     if (!capid) return;
 
-    // CAPIDs are normally six digits; wait until the user appears finished
-    // to avoid querying on every keystroke. Blur/Enter still checks any length.
-    if (capid.length >= 6) {
+    // CAPIDs are exactly six digits. Wait until all six are entered.
+    if (isValidCapid(capid)) {
       const serial = capidLookupSerial;
       capidLookupTimer = setTimeout(() => {
         if (serial === capidLookupSerial) runAutomaticCapidLookup(false);
@@ -2138,6 +2161,11 @@
     const serial = ++capidLookupSerial;
     const capid = $('newUserCapid')?.value.trim() || '';
     if (!capid) return;
+    if (!isValidCapid(capid)) {
+      setMessage('userMessage', 'CAPID must be exactly 6 digits.', 'error');
+      $('newUserCapid')?.reportValidity();
+      return;
+    }
 
     const unitId = selectedUnitForUserProvisioning();
     if (!unitId || !navigator.onLine || isDemo) return;
@@ -2308,6 +2336,10 @@
       if (!quiet) setMessage('userMessage', 'Enter a CAPID or email address to check for an existing account.', 'error');
       return null;
     }
+    if (capid && !isValidCapid(capid)) {
+      if (!quiet) setMessage('userMessage', 'CAPID must be exactly 6 digits.', 'error');
+      return null;
+    }
     if (!unitId) {
       if (!quiet) setMessage('userMessage', 'Choose the unit first.', 'error');
       return null;
@@ -2398,6 +2430,7 @@
     const lastName = $('newUserLastName')?.value.trim() || '';
     const displayName = $('newUserName')?.value.trim() || `${firstName} ${lastName}`.trim() || email;
 
+    if (capid && !isValidCapid(capid)) return setMessage('userMessage', 'CAPID must be exactly 6 digits.', 'error');
     if (!email) return setMessage('userMessage', 'Email is required.', 'error');
 
     const role = $('newUserRole')?.value || 'inspector';
